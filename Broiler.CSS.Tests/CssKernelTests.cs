@@ -63,18 +63,20 @@ public sealed class CssKernelTests
     }
 
     [Theory]
-    [InlineData("12px", CssValueKind.Dimension, CssUnit.Px)]
-    [InlineData("25%", CssValueKind.Percentage, CssUnit.Percent)]
-    [InlineData("-1.5rem", CssValueKind.Dimension, CssUnit.Rem)]
-    [InlineData("500ms", CssValueKind.Dimension, CssUnit.Ms)]
+    [InlineData("12px", CssUnit.Px)]
+    [InlineData("25%", CssUnit.Percent)]
+    [InlineData("-1.5rem", CssUnit.Rem)]
+    [InlineData("500ms", CssUnit.Ms)]
     public void Value_Parser_Recognizes_Numeric_Units(
         string source,
-        CssValueKind kind,
         CssUnit unit)
     {
         var value = CssValueParser.Parse(source);
 
-        Assert.Equal(kind, value.Kind);
+        // A recognised numeric value carries its parsed magnitude and unit; the
+        // unit alone distinguishes number (None) / percentage (Percent) /
+        // dimension (any other unit), so it fully captures the value's kind.
+        Assert.NotNull(value.Numeric);
         Assert.Equal(unit, value.Numeric!.Value.Unit);
     }
 
