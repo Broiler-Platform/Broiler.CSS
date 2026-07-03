@@ -244,10 +244,76 @@ public sealed class CssParser
         return (-1, '\0');
     }
 
-    private static int FindClosingBrace(string text, int open) =>
-        CssSyntax.FindMatching(text, open, '{', '}') is var close && close > open && text[close] == '}'
-            ? close
-            : -1;
+    // CSS Syntax §"consume a simple block": the end of the rule's { } block is
+    // the matching }, but ( ) and [ ] blocks nested inside are themselves
+    // consumed as balanced blocks — so a } (or ]) that is not the mirror of the
+    // innermost still-open block is a stray token, not a block terminator.  A
+    // brace-only depth count stops at the first } that actually sits inside an
+    // unclosed ( … ) or [ … ], splitting one rule into two and letting a later
+    // rule (e.g. `body { background: red }`) apply when it should have been
+    // swallowed (WPT css/CSS2/fonts/font-family-invalid-characters-002/004).
+    private static int FindClosingBrace(string text, int open)
+    {
+        var stack = new Stack<char>();
+        char quote = '\0';
+        for (var index = open; index < text.Length; index++)
+        {
+            var character = text[index];
+            if (quote != '\0')
+            {
+                if (character == '\\')
+                    index++;
+                else if (character == quote)
+                    quote = '\0';
+                continue;
+            }
+            if (character is '"' or '\'')
+            {
+                quote = character;
+                continue;
+            }
+            if (character == '/' && index + 1 < text.Length && text[index + 1] == '*')
+            {
+                var commentEnd = text.IndexOf("*/", index + 2, StringComparison.Ordinal);
+                if (commentEnd < 0)
+                    return -1;
+                index = commentEnd + 1;
+                continue;
+            }
+
+            switch (character)
+            {
+                case '{':
+                case '(':
+                case '[':
+                    stack.Push(character);
+                    break;
+                case '}':
+                case ')':
+                case ']':
+                    // Only a closer that mirrors the innermost open block pops it;
+                    // a mismatched closer is a stray token and is ignored.  The
+                    // stack can only empty by matching the initial '{', so that
+                    // position is the rule block's closing brace.
+                    if (stack.Count > 0 && Mirror(stack.Peek()) == character)
+                    {
+                        stack.Pop();
+                        if (stack.Count == 0)
+                            return index;
+                    }
+                    break;
+            }
+        }
+        return -1;
+
+        static char Mirror(char opener) => opener switch
+        {
+            '{' => '}',
+            '(' => ')',
+            '[' => ']',
+            _ => '\0',
+        };
+    }
 
     private static int FindTopLevelColon(string text)
     {

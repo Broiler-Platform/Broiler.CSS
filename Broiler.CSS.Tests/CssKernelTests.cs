@@ -139,6 +139,29 @@ public sealed class CssKernelTests
     }
 
     [Fact]
+    public void Unclosed_Parenthesis_In_Value_Swallows_Following_Braces_Until_Matched()
+    {
+        // CSS Syntax "consume a simple block": a } that sits inside an unclosed
+        // ( … ) is a stray token, not the end of the rule's block.  #a's
+        // unclosed "x(y" therefore extends its block across the intervening
+        // "body { … }" (its braces are consumed as part of the ( … ) block)
+        // until the ) is matched — so no standalone body/background:red rule
+        // survives.  Regression for WPT
+        // css/CSS2/fonts/font-family-invalid-characters-002 and -004.
+        var sheet = new CssParser().ParseStyleSheet(
+            "#a { font-family: x(y; } body { background: red; }) }\n#b { color: green; }");
+
+        var styleRules = sheet.Rules.OfType<CssStyleRule>().ToList();
+        Assert.Equal(2, styleRules.Count);
+        Assert.Equal("#a", Assert.Single(styleRules[0].Selectors.Selectors).Text);
+        Assert.Equal("#b", Assert.Single(styleRules[1].Selectors.Selectors).Text);
+        Assert.Equal("green", styleRules[1].Declarations.GetPropertyValue("color"));
+        Assert.DoesNotContain(
+            styleRules,
+            static rule => rule.Selectors.Selectors.Any(static selector => selector.Text == "body"));
+    }
+
+    [Fact]
     public void Phase_Zero_Corpus_Parses_And_Serializes_Stably()
     {
         var corpusPath = FindCorpusPath();
