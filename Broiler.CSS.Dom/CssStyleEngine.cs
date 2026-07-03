@@ -81,6 +81,16 @@ public sealed partial class CssStyleEngine
         EvaluateMediaQuery(query, environment.ViewportWidth, environment.ViewportHeight);
 
     /// <summary>
+    /// Reports whether an <c>@supports</c> prelude is a grammatically valid
+    /// <c>&lt;supports-condition&gt;</c>, using the same check that gates whether the
+    /// rule's contents participate in the cascade. A malformed condition (for
+    /// example a declaration missing its parentheses) is invalid and its rules do
+    /// not apply.
+    /// </summary>
+    public static bool IsValidSupportsCondition(string condition) =>
+        SupportsConditionSyntax.IsValidCondition(condition);
+
+    /// <summary>
     /// Computes the immutable computed style for <paramref name="element"/>,
     /// optionally for a <paramref name="pseudoElement"/> such as
     /// <c>"::before"</c>. Results are cached until a relevant DOM mutation or a
@@ -449,8 +459,15 @@ public sealed partial class CssStyleEngine
                     break;
 
                 case CssAtRule atRule when atRule.Name.Equals("supports", StringComparison.OrdinalIgnoreCase):
-                    // Optimistically descend; @supports feature detection is not modelled here.
-                    CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
+                    // Feature detection is optimistic — we assume support for any well-formed
+                    // feature query rather than modelling which properties/values Broiler
+                    // actually implements. But an @supports rule whose condition does not match
+                    // the <supports-condition> grammar (e.g. a declaration missing its required
+                    // parentheses, or "and"/"or" mixed without grouping) has a false condition
+                    // and MUST NOT apply its rules. Gate the descent on grammatical validity so
+                    // those malformed conditions are correctly ignored.
+                    if (SupportsConditionSyntax.IsValidCondition(atRule.Prelude))
+                        CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
                     break;
             }
         }
