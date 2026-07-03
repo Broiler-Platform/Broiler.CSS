@@ -37,15 +37,7 @@ public static class CssValueParser
             return new CssValue(value);
 
         if (TryParseNumeric(value, out var numeric))
-        {
-            var kind = numeric.Unit switch
-            {
-                CssUnit.None => CssValueKind.Number,
-                CssUnit.Percent => CssValueKind.Percentage,
-                _ => CssValueKind.Dimension,
-            };
             return new CssValue(value, numeric);
-        }
 
         if (IsQuoted(value))
             return new CssValue(value);
