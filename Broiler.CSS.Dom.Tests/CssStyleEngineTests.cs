@@ -725,4 +725,69 @@ public sealed class CssStyleEngineTests
         Assert.Contains(("position", "wobble"), rejected);
         Assert.DoesNotContain(rejected, e => e.Property == "color");
     }
+
+    // ── @supports condition validity ───────────────────────────────────────
+    // A malformed <supports-condition> has a false result and its rules must not
+    // apply; a well-formed one is evaluated optimistically (assumed supported).
+
+    [Theory]
+    // Well-formed feature queries and combinations (valid).
+    [InlineData("(color: green)", true)]
+    [InlineData("(color: green) and (color: blue)", true)]
+    [InlineData("(color: rainbow) or (color: green)", true)]
+    [InlineData("not (color: green)", true)]
+    [InlineData("not (not (color: green))", true)]
+    [InlineData("((margin: 0) and (display: inline-block !important))", true)]
+    [InlineData("selector(div, div)", true)]
+    [InlineData("not unknown()", true)]
+    [InlineData("()", true)]                 // empty general-enclosed: valid but false
+    [InlineData("not ()", true)]
+    [InlineData("() or (color: green)", true)]
+    [InlineData("(--custom: whatever)", true)]
+    // Malformed conditions (invalid → rules must not apply).
+    [InlineData("color: green", false)]      // declaration missing its parentheses
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData("(color: green) and (color: green) or (color: green)", false)] // mixed and/or
+    [InlineData("(color: green) or (color: green) and (color: green)", false)] // mixed or/and
+    [InlineData("not not (color: green)", false)]
+    [InlineData("not (color: green) and not (color: green)", false)] // trailing after `not`
+    [InlineData("not (color: green) or (color: green)", false)]
+    [InlineData("(color: green) or(color: blue)", false)]  // `or(` is a function, not a combinator
+    [InlineData("[margin: 0]", false)]                     // brackets are not a supports-in-parens
+    [InlineData("(color: green", false)]                   // unclosed group
+    [InlineData("(a [b)", false)]                          // unmatched bracket inside general-enclosed
+    public void IsValidSupportsCondition_Matches_Grammar(string condition, bool expected)
+    {
+        Assert.Equal(expected, CssStyleEngine.IsValidSupportsCondition(condition));
+    }
+
+    [Fact]
+    public void Supports_Rule_With_Invalid_Condition_Does_Not_Apply()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        // "@supports color: green" is invalid (missing parentheses), so the inner
+        // rule must be ignored and the base green must win.
+        var engine = EngineWith(
+            "div { color: green; } @supports color: green { div { color: red; } }");
+
+        Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
+    [Fact]
+    public void Supports_Rule_With_Valid_Condition_Applies()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        // A well-formed feature query is assumed supported, so the inner rule applies.
+        var engine = EngineWith(
+            "div { color: red; } @supports (color: green) { div { color: green; } }");
+
+        Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
 }
