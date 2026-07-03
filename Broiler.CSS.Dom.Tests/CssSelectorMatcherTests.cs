@@ -34,6 +34,29 @@ public sealed class CssSelectorMatcherTests
     }
 
     [Fact]
+    public void Unknown_PseudoClass_Invalidates_Selector_But_Recognized_Ones_Stay_Lenient()
+    {
+        var tree = CreateTree();
+        var matcher = new CssSelectorMatcher();
+
+        // An unrecognized pseudo-class is an invalid selector; per the Selectors
+        // spec the whole rule must be ignored, so it must not match anything.
+        // (Previously it matched every element — the WPT "invalid selector is
+        // ignored" idiom `:bogus { background: red }` painted red everywhere.)
+        Assert.False(matcher.Matches(tree.First, ":unknownpseudo"));
+        Assert.False(matcher.Matches(tree.First, "p:unknownpseudo"));
+        Assert.False(matcher.Matches(tree.First, "p.item:totally-made-up"));
+
+        // Recognized-but-unmodeled pseudo-classes stay lenient (match as before),
+        // so this is a strict narrowing that only rejects genuinely invalid names.
+        Assert.True(matcher.Matches(tree.First, "p:defined"));
+        Assert.True(matcher.Matches(tree.First, "p:read-only"));
+
+        // Vendor-prefixed pseudo-classes are extensions, not typos — kept lenient.
+        Assert.True(matcher.Matches(tree.First, "p:-webkit-anything"));
+    }
+
+    [Fact]
     public void Matches_Root_Scope_Empty_Language_And_Form_State()
     {
         var document = new DomDocument();
