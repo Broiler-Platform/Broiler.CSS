@@ -256,8 +256,29 @@ public sealed partial class CssStyleEngine
             foreach (var component in BorderComponents)
             {
                 var longhand = $"border-{side}-{component}";
-                if (!computed.ContainsKey(longhand) && CssInitialValues.TryGetValue(longhand, out var initial))
+                if (computed.ContainsKey(longhand))
+                    continue;
+
+                if (component == "width")
+                {
+                    // border-width's initial is 'medium', not 0 — the plain
+                    // computed-initial (0px) dropped the border for the common
+                    // `border: solid <color>` form, which omits the width (WPT
+                    // css/CSS2/box-display/root-canvas-001's lime border).  The
+                    // shorthand that triggered this reset supplies a border-style,
+                    // so project the *used* width: 'medium' when that style paints,
+                    // but 0 for 'none'/'hidden' (their used border-width is 0).  A
+                    // missing style is its own initial 'none' → 0.
+                    var borderStyle = computed.TryGetValue($"border-{side}-style", out var st)
+                        && !string.IsNullOrWhiteSpace(st)
+                        ? st.Trim().ToLowerInvariant()
+                        : "none";
+                    computed[longhand] = borderStyle is "none" or "hidden" ? "0px" : "medium";
+                }
+                else if (CssInitialValues.TryGetValue(longhand, out var initial))
+                {
                     computed[longhand] = initial;
+                }
             }
         }
     }
