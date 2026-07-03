@@ -141,7 +141,8 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         foreach (var pseudo in pseudos)
         {
             var argument = pseudo.Argument?.Trim();
-            var matches = pseudo.Name.ToLowerInvariant() switch
+            var name = pseudo.Name.ToLowerInvariant();
+            var matches = name switch
             {
                 "first-child" => ElementIndex(element) == 1,
                 "last-child" => ElementIndexFromEnd(element) == 1,
@@ -175,7 +176,16 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                     or "target" or "target-within"
                     or "autofill" or "placeholder-shown"
                     or "user-valid" or "user-invalid" => false,
-                _ => true,
+                // A recognized-but-unmodeled pseudo-class (e.g. :read-only,
+                // :any-link, :defined, most form-state pseudos) stays lenient —
+                // matching as it did before — so this is a strict narrowing.
+                // A genuinely UNKNOWN pseudo-class (e.g. :unknownpseudo) is an
+                // invalid selector: per the Selectors spec the whole rule must be
+                // ignored, so it must NOT match. Treating unknowns as match-all
+                // (the old `_ => true`) made the standard WPT "invalid selector is
+                // ignored" idiom — `:bogus { background: red }` — paint red on
+                // every element (CSS2 cascade/at-import-010 and siblings).
+                _ => name.StartsWith('-') || RecognizedPseudoClasses.Contains(name),
             };
             if (!matches)
                 return false;
@@ -702,6 +712,45 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool IsNamed(DomElement element, params string[] names) => names.Any(name => AsciiEquals(element.LocalName, name));
     private static bool IsFormControl(DomElement element) => IsNamed(element, "input", "button", "select", "textarea");
     private static bool IsCheckable(DomElement element) => IsNamed(element, "input") && element.GetAttribute("type") is { } type && (AsciiEquals(type, "checkbox") || AsciiEquals(type, "radio"));
+
+    // Every pseudo-class name the CSS/Selectors specs define as valid, plus the
+    // four legacy single-colon pseudo-elements (:before/:after/:first-line/
+    // :first-letter, which reach the pseudo-class switch because only "::" forms
+    // are stripped upstream). Names the matcher already models explicitly are
+    // included too so the set doubles as the full "is this a real selector"
+    // vocabulary. A pseudo-class outside this set (and not vendor-prefixed) is an
+    // invalid selector and its rule must be ignored rather than matched.
+    private static readonly HashSet<string> RecognizedPseudoClasses = new(StringComparer.Ordinal)
+    {
+        // Structural
+        "root", "empty", "blank", "scope",
+        "first-child", "last-child", "only-child",
+        "first-of-type", "last-of-type", "only-of-type",
+        "nth-child", "nth-last-child", "nth-of-type", "nth-last-of-type",
+        "nth-col", "nth-last-col",
+        // Logical combinators
+        "is", "where", "not", "has", "matches", "any",
+        // Linguistic / directionality
+        "lang", "dir",
+        // Location / link
+        "any-link", "link", "visited", "local-link",
+        "target", "target-within", "current", "past", "future",
+        // User action
+        "hover", "active", "focus", "focus-visible", "focus-within",
+        // Input / form state
+        "enabled", "disabled", "read-only", "read-write", "placeholder-shown",
+        "default", "checked", "indeterminate", "valid", "invalid",
+        "in-range", "out-of-range", "required", "optional",
+        "user-valid", "user-invalid", "autofill",
+        // Tree / element identity
+        "defined", "host", "host-context", "state",
+        // Display / media / top-layer
+        "fullscreen", "modal", "picture-in-picture", "popover-open",
+        "open", "closed", "playing", "paused", "seeking", "buffering",
+        "stalled", "muted", "volume-locked",
+        // Legacy single-colon pseudo-elements (kept lenient).
+        "before", "after", "first-line", "first-letter",
+    };
 
     private readonly record struct SelectorPart(char Combinator, string Compound);
     private readonly record struct AttributeFilter(string Name, string? Operator, string? Value);
