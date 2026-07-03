@@ -583,6 +583,32 @@ public sealed partial class CssStyleEngine
             var token = tokens[i];
             var lower = token.ToLowerInvariant();
 
+            // CSS Fonts `font` shorthand grammar:
+            //   [ <style> || <variant> || <weight> ]? <size> [ / <line-height> ]? <family>
+            // Any style/variant/weight keywords always PRECEDE the font-size, so
+            // classify them FIRST. Otherwise a bare numeric weight (100..900) is
+            // mistaken for a unitless font-size length — the value that gates
+            // WPT floats-143 (`font:900 2em/1`), background-root-006
+            // (`font:900 1.75em`) and c527-font-10 (`font:italic small-caps 100
+            // 150%/300%`): the weight was consumed as `font-size:900`/`100`,
+            // producing gigantic text. A unitless number before the size can
+            // only be a weight.
+            if (lower is "normal" or "italic" or "oblique")
+            {
+                fontStyle = lower;
+                continue;
+            }
+            if (lower == "small-caps")
+            {
+                fontVariant = lower;
+                continue;
+            }
+            if (lower is "bold" or "bolder" or "lighter" or "100" or "200" or "300" or "400" or "500" or "600" or "700" or "800" or "900")
+            {
+                fontWeight = lower;
+                continue;
+            }
+
             if (TryParseFontSizeAndLineHeight(lower, token, out var parsedFontSize, out var parsedLineHeight))
             {
                 fontSize = parsedFontSize;
@@ -590,13 +616,6 @@ public sealed partial class CssStyleEngine
                 fontSizeIndex = i;
                 break;
             }
-
-            if (lower is "normal" or "italic" or "oblique")
-                fontStyle = lower;
-            else if (lower == "small-caps")
-                fontVariant = lower;
-            else if (lower is "bold" or "bolder" or "lighter" or "100" or "200" or "300" or "400" or "500" or "600" or "700" or "800" or "900")
-                fontWeight = lower;
         }
 
         if (fontSizeIndex < 0 || fontSizeIndex >= tokens.Length - 1 || string.IsNullOrWhiteSpace(fontSize))
