@@ -307,7 +307,7 @@ public sealed partial class CssStyleEngine
                     or "pre-line" or "break-spaces";
 
             case "display":
-                return v is "block" or "inline" or "inline-block" or "none"
+                if (v is "block" or "inline" or "inline-block" or "none"
                     or "flex" or "inline-flex" or "grid" or "inline-grid"
                     or "table" or "inline-table" or "table-row" or "table-cell"
                     or "table-column" or "table-row-group" or "table-header-group"
@@ -320,7 +320,16 @@ public sealed partial class CssStyleEngine
                     // valid declaration and falling back to a stale cascade value.
                     or "ruby" or "ruby-base" or "ruby-text"
                     or "ruby-base-container" or "ruby-text-container"
-                    or "math";
+                    or "math"
+                    // Experimental CSS Grid Level 3 <display-inside> keyword; the
+                    // layout engine maps it to a grid formatting context.
+                    or "grid-lanes")
+                    return true;
+                // CSS Display 3 two-value syntax: <display-outside> <display-inside>
+                // (e.g. "inline grid", "block flow-root"). Accept a valid pair in
+                // either order so the layout engine can normalize it to a legacy
+                // single keyword.
+                return IsTwoValueDisplay(v);
 
             case "position":
                 return v is "static" or "relative" or "absolute" or "fixed" or "sticky";
@@ -424,6 +433,27 @@ public sealed partial class CssStyleEngine
             default:
                 return true;
         }
+    }
+
+    /// <summary>
+    /// CSS Display 3 §2.1: validate the two-value <c>display</c> syntax
+    /// (<c>&lt;display-outside&gt; &amp;&amp; &lt;display-inside&gt;</c>), e.g.
+    /// <c>inline grid</c> or <c>block flow-root</c>. The two keywords may appear
+    /// in either order. <c>grid-lanes</c> is accepted as an experimental
+    /// &lt;display-inside&gt; (the layout engine maps it to grid).
+    /// </summary>
+    private static bool IsTwoValueDisplay(string value)
+    {
+        var parts = value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2)
+            return false;
+
+        static bool IsOutside(string k) => k is "block" or "inline" or "run-in";
+        static bool IsInside(string k) => k is "flow" or "flow-root" or "table"
+            or "flex" or "grid" or "grid-lanes" or "ruby";
+
+        return (IsOutside(parts[0]) && IsInside(parts[1]))
+            || (IsInside(parts[0]) && IsOutside(parts[1]));
     }
 
     private static bool IsBorderStyleList(string value)
