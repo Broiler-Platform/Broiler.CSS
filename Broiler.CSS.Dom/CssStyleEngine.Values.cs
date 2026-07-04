@@ -320,11 +320,16 @@ public sealed partial class CssStyleEngine
                     // valid declaration and falling back to a stale cascade value.
                     or "ruby" or "ruby-base" or "ruby-text"
                     or "ruby-base-container" or "ruby-text-container"
-                    or "math"
-                    // Experimental CSS Grid Level 3 <display-inside> keyword; the
-                    // layout engine maps it to a grid formatting context.
-                    or "grid-lanes")
+                    or "math")
                     return true;
+                // The experimental CSS Grid Level 3 <display-inside> keyword
+                // grid-lanes is intentionally NOT accepted: no stable browser
+                // ships it unflagged, so treating display:grid-lanes (or the
+                // two-value inline grid-lanes) as invalid — dropping the
+                // declaration so the element keeps its default display — matches
+                // reference browsers. Accepting it and mapping it to a grid
+                // formatting context instead diverged from every reference on the
+                // css-grid/grid-lanes WPT suite.
                 // CSS Display 3 two-value syntax: <display-outside> <display-inside>
                 // (e.g. "inline grid", "block flow-root"). Accept a valid pair in
                 // either order so the layout engine can normalize it to a legacy
@@ -439,8 +444,9 @@ public sealed partial class CssStyleEngine
     /// CSS Display 3 §2.1: validate the two-value <c>display</c> syntax
     /// (<c>&lt;display-outside&gt; &amp;&amp; &lt;display-inside&gt;</c>), e.g.
     /// <c>inline grid</c> or <c>block flow-root</c>. The two keywords may appear
-    /// in either order. <c>grid-lanes</c> is accepted as an experimental
-    /// &lt;display-inside&gt; (the layout engine maps it to grid).
+    /// in either order. The experimental <c>grid-lanes</c> &lt;display-inside&gt;
+    /// is deliberately excluded so <c>inline grid-lanes</c> is rejected as invalid
+    /// (matching reference browsers, which do not ship grid-lanes unflagged).
     /// </summary>
     private static bool IsTwoValueDisplay(string value)
     {
@@ -450,7 +456,7 @@ public sealed partial class CssStyleEngine
 
         static bool IsOutside(string k) => k is "block" or "inline" or "run-in";
         static bool IsInside(string k) => k is "flow" or "flow-root" or "table"
-            or "flex" or "grid" or "grid-lanes" or "ruby";
+            or "flex" or "grid" or "ruby";
 
         return (IsOutside(parts[0]) && IsInside(parts[1]))
             || (IsInside(parts[0]) && IsOutside(parts[1]));
