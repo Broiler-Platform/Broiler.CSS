@@ -547,12 +547,62 @@ public sealed partial class CssStyleEngine
         if (!winners.TryGetValue(property, out var existing) || slot.Beats(existing))
             winners[property] = slot;
 
+        // A box shorthand (margin/padding) must also compete for its physical
+        // longhands within the cascade, so a higher-origin shorthand overrides a
+        // lower-origin longhand — most visibly an author `margin: 0` (or
+        // `padding: 0`) resetting the user-agent list indent (`ol, ul { margin-left:
+        // 40px }`), which the post-cascade expansion could not do because it keeps
+        // any already-present longhand regardless of origin. Seeding each longhand
+        // with the shorthand's rank/specificity/order lets the normal cascade
+        // comparison resolve shorthand-vs-longhand precedence by source order.
+        AddBoxShorthandLonghandSlots(winners, property, slot);
+
         var unprefixed = StripVendorPrefix(property);
         if (!string.Equals(unprefixed, property, StringComparison.Ordinal))
         {
             var aliasSlot = new CascadeSlot(value, CascadeRank(origin, important), specificity, order);
             if (!winners.TryGetValue(unprefixed, out var existingAlias) || aliasSlot.Beats(existingAlias))
                 winners[unprefixed] = aliasSlot;
+        }
+    }
+
+    /// <summary>Physical-side longhands for the <c>margin</c>/<c>padding</c> box
+    /// shorthands, expanded into cascade slots so a shorthand and a longhand of the
+    /// same property resolve against each other by origin/specificity/source order.</summary>
+    private static readonly Dictionary<string, string[]> BoxShorthandLonghands =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["margin"] = ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+            ["padding"] = ["padding-top", "padding-right", "padding-bottom", "padding-left"],
+        };
+
+    /// <summary>
+    /// When <paramref name="property"/> is a <c>margin</c>/<c>padding</c> box
+    /// shorthand, adds a cascade slot for each of its four physical longhands
+    /// (top/right/bottom/left, per the 1–4 value CSS box grammar) carrying the
+    /// shorthand's rank/specificity/order, so the ordinary <see cref="CascadeSlot.Beats"/>
+    /// comparison lets it override lower-origin longhands and be overridden by later
+    /// same-or-higher-origin longhands. No-op for every other property.
+    /// </summary>
+    private static void AddBoxShorthandLonghandSlots(
+        Dictionary<string, CascadeSlot> winners, string property, CascadeSlot shorthand)
+    {
+        if (!BoxShorthandLonghands.TryGetValue(property, out var sides))
+            return;
+        var parts = SplitCssValues(shorthand.Value);
+        if (parts.Length is 0 or > 4)
+            return;
+        // CSS box grammar: 1 → all; 2 → v/h; 3 → top/h/bottom; 4 → t/r/b/l.
+        string top = parts[0];
+        string right = parts.Length >= 2 ? parts[1] : top;
+        string bottom = parts.Length >= 3 ? parts[2] : top;
+        string left = parts.Length >= 4 ? parts[3] : right;
+        var values = new[] { top, right, bottom, left };
+        for (int i = 0; i < sides.Length; i++)
+        {
+            var sideSlot = shorthand with { Value = values[i] };
+            if (!winners.TryGetValue(sides[i], out var existing) || sideSlot.Beats(existing))
+                winners[sides[i]] = sideSlot;
         }
     }
 
