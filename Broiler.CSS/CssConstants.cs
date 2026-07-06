@@ -139,6 +139,10 @@ public static class CssConstants
 
     /// <summary>Quarter-millimeter: 1Q = 1/40 cm ≈ 0.945 px at 96 dpi.</summary>
     public const string Q = "q";
-    public const double FontSize = 12f;
+    /// <summary>
+    /// Initial (root) font size in points. Single-sourced from
+    /// <see cref="CssMetrics.DefaultFontSizePt"/> (measurement-dedup roadmap M5).
+    /// </summary>
+    public const double FontSize = CssMetrics.DefaultFontSizePt;
     public const string DefaultFont = "serif";
 }
