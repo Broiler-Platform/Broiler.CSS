@@ -49,9 +49,10 @@ public static class CssLengthParser
 
     public static bool IsValidLength(string value)
     {
-        var defaultRootLineHeight = CssConstants.FontSize * (96.0 / 72.0) * 1.2;
-        if (TryEvaluateLengthExpression(value, 100f, 16f, null, fontAdjust: false, returnPoints: false,
-            lineHeightFactor: 16f * 1.2, rootLineHeightFactor: defaultRootLineHeight, out _))
+        var defaultRootLineHeight = CssMetrics.DefaultFontSizePx * CssMetrics.NormalLineHeightFactor;
+        if (TryEvaluateLengthExpression(value, 100f, CssMetrics.DefaultFontSizePx, null, fontAdjust: false, returnPoints: false,
+            lineHeightFactor: CssMetrics.DefaultFontSizePx * CssMetrics.NormalLineHeightFactor,
+            rootLineHeightFactor: defaultRootLineHeight, out _))
         {
             return true;
         }
@@ -153,9 +154,9 @@ public static class CssLengthParser
         if (string.IsNullOrEmpty(length) || length == "0")
             return 0f;
 
-        var computedLineHeightFactor = lineHeightFactor ?? (emFactor * 1.2);
+        var computedLineHeightFactor = lineHeightFactor ?? (emFactor * CssMetrics.NormalLineHeightFactor);
         var computedRootLineHeightFactor = rootLineHeightFactor
-            ?? (CssConstants.FontSize * (96.0 / 72.0) * 1.2);
+            ?? (CssMetrics.DefaultFontSizePx * CssMetrics.NormalLineHeightFactor);
 
         if (TryEvaluateLengthExpression(length, hundredPercent, emFactor, defaultUnit, fontAdjust, returnPoints,
             computedLineHeightFactor, computedRootLineHeightFactor, out var evaluated))
@@ -172,8 +173,6 @@ public static class CssLengthParser
         //Get units of the length
         string unit = GetUnit(length, defaultUnit, out bool hasUnit);
 
-        //Factor will depend on the unit
-        double factor;
         //Number of the length
         int unitLen = unit == CssConstants.Rem || unit == CssConstants.Rlh ? 3 :
                       unit == CssConstants.Vmin || unit == CssConstants.Vmax ? 4 :
@@ -182,83 +181,56 @@ public static class CssLengthParser
             ? length[..^unitLen]
             : length;
 
-        switch (unit)
-        {
-            case CssConstants.Em:
-                factor = emFactor;
-                break;
-            case CssConstants.Rem:
-                // rem is relative to root element font size (default 11pt)
-                factor = CssConstants.FontSize * (96.0 / 72.0);
-                break;
-            case CssConstants.Ex:
-                factor = emFactor / 2;
-                break;
-            case CssConstants.Ch:
-                // Approximate 1ch as half an em so 16px monospace text resolves
-                // to an 8px character advance in the current focused Phase 3 slice.
-                factor = emFactor / 2;
-                break;
-            case CssConstants.Ic:
-                // Approximate 1ic as 1em for the current focused Phase 3 slice.
-                factor = emFactor;
-                break;
-            case CssConstants.Lh:
-                factor = computedLineHeightFactor;
-                break;
-            case CssConstants.Px:
-                factor = fontAdjust ? 72f / 96f : 1f; //TODO:a check support for hi dpi
-                break;
-            case CssConstants.Mm:
-                factor = 3.779527559f; //3 pixels per millimeter
-                break;
-            case CssConstants.Cm:
-                factor = 37.795275591f; //37 pixels per centimeter
-                break;
-            case CssConstants.In:
-                factor = 96f; //96 pixels per inch
-                break;
-            case CssConstants.Pt:
-                factor = 96f / 72f; // 1 point = 1/72 of inch
+        // pt with returnPoints yields the raw point count (no px conversion).
+        if (unit == CssConstants.Pt && returnPoints)
+            return ParseNumber(number, hundredPercent);
 
-                if (returnPoints)
-                {
-                    return ParseNumber(number, hundredPercent);
-                }
+        double factor = UnitToPixelFactor(unit, emFactor, fontAdjust,
+            computedLineHeightFactor, computedRootLineHeightFactor);
 
-                break;
-            case CssConstants.Pc:
-                factor = 16f; // 1 pica = 12 points
-                break;
-            case CssConstants.Rlh:
-                factor = computedRootLineHeightFactor;
-                break;
-            case CssConstants.Q:
-                factor = 37.795275591f / 40f; // 1Q = 1/40 cm ≈ 0.945 px
-                break;
-            case CssConstants.Vh:
-                // CSS Values 3 §5.1.2: 1vh = 1% of viewport height
-                factor = _vhFactor;
-                break;
-            case CssConstants.Vw:
-                // CSS Values 3 §5.1.2: 1vw = 1% of viewport width
-                factor = _vwFactor;
-                break;
-            case CssConstants.Vmin:
-                // CSS Values 3 §5.1.2: 1vmin = 1% of min(vw, vh)
-                factor = _vminFactor;
-                break;
-            case CssConstants.Vmax:
-                // CSS Values 3 §5.1.2: 1vmax = 1% of max(vw, vh)
-                factor = _vmaxFactor;
-                break;
-            default:
-                factor = 0f;
-                break;
-        }
+        // An unrecognized unit resolves to 0px (legacy ParseLength default).
+        if (double.IsNaN(factor))
+            factor = 0f;
 
         return factor * ParseNumber(number, hundredPercent);
     }
+
+    /// <summary>
+    /// Resolves a CSS unit token to its multiplicative CSS-pixel factor. Single
+    /// source of the unit → pixel table, shared by <see cref="ParseLength"/> and
+    /// <see cref="TryParseSimpleLength"/>. Returns <see cref="double.NaN"/> for an
+    /// unrecognized unit; callers map that to their own behaviour (ParseLength →
+    /// factor 0; the math-expression evaluator → parse failure). The <c>pt</c>
+    /// factor is always the px-per-point ratio — the <c>returnPoints</c> special
+    /// case (yield the raw point count) is handled at each call site.
+    /// </summary>
+    private static double UnitToPixelFactor(string unit, double emFactor, bool fontAdjust,
+        double lineHeightFactor, double rootLineHeightFactor) => unit switch
+    {
+        CssConstants.Em => emFactor,
+        // rem is relative to the root element font size (default medium).
+        CssConstants.Rem => CssMetrics.DefaultFontSizePx,
+        CssConstants.Ex => emFactor / 2,
+        // Approximate 1ch as half an em (8px advance for 16px monospace text).
+        CssConstants.Ch => emFactor / 2,
+        // Approximate 1ic as 1em.
+        CssConstants.Ic => emFactor,
+        CssConstants.Lh => lineHeightFactor,
+        CssConstants.Rlh => rootLineHeightFactor,
+        CssConstants.Px => fontAdjust ? CssMetrics.PxToPt : 1.0, //TODO: hi-dpi support
+        CssConstants.Mm => CssMetrics.PxPerMm,
+        CssConstants.Cm => CssMetrics.PxPerCm,
+        CssConstants.In => CssMetrics.PxPerInch,
+        CssConstants.Pt => CssMetrics.PtToPx,
+        CssConstants.Pc => CssMetrics.PxPerPica,
+        CssConstants.Q => CssMetrics.PxPerQ,
+        // CSS Values 3 §5.1.2: viewport-relative units (1% of the axis).
+        CssConstants.Vh => _vhFactor,
+        CssConstants.Vw => _vwFactor,
+        CssConstants.Vmin => _vminFactor,
+        CssConstants.Vmax => _vmaxFactor,
+        _ => double.NaN,
+    };
 
     private static bool TryEvaluateLengthExpression(string expression, double hundredPercent, double emFactor,
         string defaultUnit, bool fontAdjust, bool returnPoints, double lineHeightFactor,
@@ -466,28 +438,8 @@ public static class CssLengthParser
         if (!double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out double parsedNumber))
             return false;
 
-        double factor = unit switch
-        {
-            CssConstants.Em => emFactor,
-            CssConstants.Rem => CssConstants.FontSize * (96.0 / 72.0),
-            CssConstants.Ex => emFactor / 2,
-            CssConstants.Ch => emFactor / 2,
-            CssConstants.Ic => emFactor,
-            CssConstants.Lh => lineHeightFactor,
-            CssConstants.Px => fontAdjust ? 72f / 96f : 1f,
-            CssConstants.Mm => 3.779527559f,
-            CssConstants.Cm => 37.795275591f,
-            CssConstants.In => 96f,
-            CssConstants.Pt => returnPoints ? 1f : 96f / 72f,
-            CssConstants.Pc => 16f,
-            CssConstants.Rlh => rootLineHeightFactor,
-            CssConstants.Q => 37.795275591f / 40f,
-            CssConstants.Vh => _vhFactor,
-            CssConstants.Vw => _vwFactor,
-            CssConstants.Vmin => _vminFactor,
-            CssConstants.Vmax => _vmaxFactor,
-            _ => double.NaN
-        };
+        double factor = UnitToPixelFactor(unit, emFactor, fontAdjust,
+            lineHeightFactor, rootLineHeightFactor);
 
         if (double.IsNaN(factor))
             return false;
@@ -633,7 +585,14 @@ public static class CssLengthParser
         return depth == 0;
     }
 
-    private static string GetUnit(string length, string defaultUnit, out bool hasUnit)
+    /// <summary>
+    /// Scans a length token for its trailing CSS unit (the single source of the
+    /// substring/unit-matching logic; also consumed by <see cref="CssLength"/> —
+    /// see the measurement-dedup roadmap, Phase M3). Returns the canonical unit
+    /// string and sets <paramref name="hasUnit"/>; falls back to
+    /// <paramref name="defaultUnit"/> when no unit is present.
+    /// </summary>
+    internal static string GetUnit(string length, string defaultUnit, out bool hasUnit)
     {
         // Check for 4-character units first (e.g. "vmin", "vmax")
         if (length.Length >= 5)

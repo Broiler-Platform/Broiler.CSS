@@ -44,104 +44,53 @@ public sealed class CssLength
             return;
         }
 
-        // Check for 4-character units (e.g. "vmin", "vmax")
-        if (length.Length >= 5)
+        // Detect the trailing unit via the shared CssLengthParser scanner (single
+        // source of the substring/unit-matching logic — measurement-dedup roadmap
+        // Phase M3), then project the token onto CssUnit. Units the legacy
+        // CssLength never recognized (lh/rlh/Q) map to an error, preserving behavior.
+        string unit = CssLengthParser.GetUnit(length, null, out bool hasUnit);
+        if (!hasUnit || !TryMapUnit(unit, out CssUnit cssUnit, out bool isRelative))
         {
-            var last4 = length.Substring(length.Length - 4, 4);
-            if (last4.Equals(CssConstants.Vmin, StringComparison.OrdinalIgnoreCase))
-            {
-                Unit = CssUnit.Vmin;
-                IsRelative = true;
-                string vmNumber = length[..^4];
-                if (!double.TryParse(vmNumber, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number))
-                    HasError = true;
-                return;
-            }
-            if (last4.Equals(CssConstants.Vmax, StringComparison.OrdinalIgnoreCase))
-            {
-                Unit = CssUnit.Vmax;
-                IsRelative = true;
-                string vmNumber = length[..^4];
-                if (!double.TryParse(vmNumber, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number))
-                    HasError = true;
-                return;
-            }
-        }
-
-        // Check for 3-character units first (e.g. "rem")
-        if (length.Length >= 4 && length.EndsWith(CssConstants.Rem, StringComparison.Ordinal))
-        {
-            Unit = CssUnit.Rem;
-            IsRelative = true;
-            string remNumber = length[..^3];
-            if (!double.TryParse(remNumber, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number))
-                HasError = true;
+            HasError = true;
             return;
         }
 
-        //Get units of the length
-        string u = length.Substring(length.Length - 2, 2);
+        Unit = cssUnit;
+        IsRelative = isRelative;
 
-        //Number of the length
-        string number = length[..^2];
-
-        switch (u)
-        {
-            case CssConstants.Em:
-                Unit = CssUnit.Em;
-                IsRelative = true;
-                break;
-            case CssConstants.Ex:
-                Unit = CssUnit.Ex;
-                IsRelative = true;
-                break;
-            case CssConstants.Ch:
-                Unit = CssUnit.Ch;
-                IsRelative = true;
-                break;
-            case CssConstants.Ic:
-                Unit = CssUnit.Ic;
-                IsRelative = true;
-                break;
-            case CssConstants.Px:
-                Unit = CssUnit.Px;
-                IsRelative = true;
-                break;
-            case CssConstants.Mm:
-                Unit = CssUnit.Mm;
-                break;
-            case CssConstants.Cm:
-                Unit = CssUnit.Cm;
-                break;
-            case CssConstants.In:
-                Unit = CssUnit.In;
-                break;
-            case CssConstants.Pt:
-                Unit = CssUnit.Pt;
-                break;
-            case CssConstants.Pc:
-                Unit = CssUnit.Pc;
-                break;
-            default:
-                // Check for viewport units (case-insensitive)
-                if (u.Equals(CssConstants.Vh, StringComparison.OrdinalIgnoreCase))
-                {
-                    Unit = CssUnit.Vh;
-                    IsRelative = true;
-                    break;
-                }
-                if (u.Equals(CssConstants.Vw, StringComparison.OrdinalIgnoreCase))
-                {
-                    Unit = CssUnit.Vw;
-                    IsRelative = true;
-                    break;
-                }
-                HasError = true;
-                return;
-        }
-
+        string number = length[..^unit.Length];
         if (!double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number))
             HasError = true;
+    }
+
+    /// <summary>
+    /// Projects a unit token from <see cref="CssLengthParser.GetUnit"/> onto the
+    /// <see cref="CssUnit"/> enum plus its font/viewport-relative flag. Only the
+    /// units the legacy <see cref="CssLength"/> parser recognized are accepted;
+    /// <c>lh</c>/<c>rlh</c>/<c>Q</c> (and anything else) return <c>false</c>.
+    /// </summary>
+    private static bool TryMapUnit(string unit, out CssUnit cssUnit, out bool isRelative)
+    {
+        (cssUnit, isRelative) = unit switch
+        {
+            CssConstants.Em => (CssUnit.Em, true),
+            CssConstants.Ex => (CssUnit.Ex, true),
+            CssConstants.Ch => (CssUnit.Ch, true),
+            CssConstants.Ic => (CssUnit.Ic, true),
+            CssConstants.Px => (CssUnit.Px, true),
+            CssConstants.Rem => (CssUnit.Rem, true),
+            CssConstants.Vh => (CssUnit.Vh, true),
+            CssConstants.Vw => (CssUnit.Vw, true),
+            CssConstants.Vmin => (CssUnit.Vmin, true),
+            CssConstants.Vmax => (CssUnit.Vmax, true),
+            CssConstants.Mm => (CssUnit.Mm, false),
+            CssConstants.Cm => (CssUnit.Cm, false),
+            CssConstants.In => (CssUnit.In, false),
+            CssConstants.Pt => (CssUnit.Pt, false),
+            CssConstants.Pc => (CssUnit.Pc, false),
+            _ => (CssUnit.None, false),
+        };
+        return cssUnit != CssUnit.None;
     }
 
 
