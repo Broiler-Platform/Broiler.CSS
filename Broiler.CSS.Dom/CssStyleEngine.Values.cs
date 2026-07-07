@@ -303,8 +303,7 @@ public sealed partial class CssStyleEngine
         switch (property.ToLowerInvariant())
         {
             case "white-space":
-                return v is "normal" or "nowrap" or "pre" or "pre-wrap"
-                    or "pre-line" or "break-spaces";
+                return IsWhiteSpaceValue(v);
 
             case "display":
                 if (v is "block" or "inline" or "inline-block" or "none"
@@ -460,6 +459,44 @@ public sealed partial class CssStyleEngine
 
         return (IsOutside(parts[0]) && IsInside(parts[1]))
             || (IsInside(parts[0]) && IsOutside(parts[1]));
+    }
+
+    // CSS Text 4 §3: white-space is a shorthand for white-space-collapse and
+    // text-wrap-mode. Its value is either a legacy single keyword
+    // (normal | pre | nowrap | pre-wrap | pre-line) or the two-longhand form
+    // <'white-space-collapse'> || <'text-wrap-mode'> — at most one collapse
+    // keyword combined with at most one wrap keyword, in either order. Accepting
+    // the full grammar keeps values like "preserve-breaks" (== pre-line) and
+    // "break-spaces nowrap" from being dropped as invalid.
+    private static bool IsWhiteSpaceValue(string value)
+    {
+        if (value is "normal" or "nowrap" or "pre" or "pre-wrap" or "pre-line")
+            return true;
+
+        bool collapseSeen = false, wrapSeen = false;
+        foreach (var token in value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries))
+        {
+            switch (token)
+            {
+                case "collapse":
+                case "preserve":
+                case "preserve-breaks":
+                case "preserve-spaces":
+                case "break-spaces":
+                    if (collapseSeen) return false;
+                    collapseSeen = true;
+                    break;
+                case "wrap":
+                case "nowrap":
+                    if (wrapSeen) return false;
+                    wrapSeen = true;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return collapseSeen || wrapSeen;
     }
 
     // CSS Text 3 §2.1: none | [ [capitalize | uppercase | lowercase] || full-width

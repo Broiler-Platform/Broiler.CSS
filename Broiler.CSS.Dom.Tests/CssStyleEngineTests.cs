@@ -488,6 +488,32 @@ public sealed class CssStyleEngineTests
         Assert.Equal(valid, engine.GetComputedStyle(div).GetPropertyValue(property));
     }
 
+    [Theory]
+    // CSS Text 4: white-space is a shorthand for white-space-collapse and
+    // text-wrap-mode. The modern single keywords and the two-longhand form are
+    // valid and must not be dropped as invalid (WPT css-text; issue #1272 lists
+    // "white-space: preserve-breaks" and "white-space: break-spaces nowrap" among
+    // the most-dropped declarations).
+    [InlineData("preserve-breaks")]
+    [InlineData("preserve")]
+    [InlineData("break-spaces")]
+    [InlineData("break-spaces nowrap")]
+    [InlineData("preserve-breaks nowrap")]
+    [InlineData("collapse wrap")]
+    public void Valid_WhiteSpace_Shorthand_Is_Kept(string whiteSpace)
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        div.Id = "t";
+        body.AppendChild(div);
+
+        // The second declaration is a valid CSS Text 4 white-space value and must
+        // win over the first rather than being discarded by error recovery.
+        var engine = EngineWith($"#t {{ white-space: pre; white-space: {whiteSpace}; }}");
+
+        Assert.Equal(whiteSpace, engine.GetComputedStyle(div).GetPropertyValue("white-space"));
+    }
+
     [Fact]
     public void Invalid_Vendor_Color_Is_Rejected_But_Standard_Prefixes_Pass()
     {
