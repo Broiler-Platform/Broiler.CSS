@@ -24,7 +24,7 @@ public sealed partial class CssStyleEngine
 {
     private readonly CssSelectorMatcher _matcher;
     private readonly List<StyleSheetEntry> _sheets = [];
-    private readonly Dictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = new();
+    private readonly Dictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = [];
     // Memoizes the declared cascade winners (stylesheets + optional inline) per
     // (element, pseudo, includeInline). The declared cascade is the hot inner step
     // shared by every GetComputedStyle/GetCascadedStyle/GetCascadedDeclaredValues
@@ -32,7 +32,7 @@ public sealed partial class CssStyleEngine
     // unlike the computed-style _cache, was previously recomputed from scratch each
     // time (linear selector scan of every UA + author rule). Cleared alongside
     // _cache in InvalidateAll, so it shares the exact same correctness lifecycle.
-    private readonly Dictionary<(DomElement Element, string? Pseudo, bool IncludeInline), IReadOnlyDictionary<string, string>> _declaredCascadeCache = new();
+    private readonly Dictionary<(DomElement Element, string? Pseudo, bool IncludeInline), IReadOnlyDictionary<string, string>> _declaredCascadeCache = [];
     // Bumped by InvalidateAll; a declared-cascade computation captures it up front and
     // only memoizes its result if it is unchanged at the end, so a mid-cascade
     // stylesheet re-sync (host callback during selector matching, see the _sheets
@@ -173,7 +173,7 @@ public sealed partial class CssStyleEngine
         return ComputeCascadedStyle(
             element,
             NormalizePseudoElement(pseudoElement),
-            new HashSet<DomElement>(),
+            [],
             includeInlineStyle);
     }
 
@@ -507,7 +507,11 @@ public sealed partial class CssStyleEngine
         {
             if (SelectorMatchesComputedStyleTarget(element, selector.Text.Trim(), pseudoElement))
             {
-                var spec = CssSelectorParser.CalculateSpecificity(selector.Text).Encoded;
+                // Specificity is computed once at parse time and stored on the
+                // selector (CssSelector.Specificity); reuse it rather than
+                // re-parsing the selector text on every match in the cascade hot
+                // path.
+                var spec = selector.Specificity.Encoded;
                 if (spec > bestSpecificity)
                     bestSpecificity = spec;
             }

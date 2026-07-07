@@ -17,7 +17,7 @@ public static class RendererStyleQueries
         bool HasBeforeRules,
         bool HasAfterRules);
 
-    private static readonly ConditionalWeakTable<CssStyleSheet, Metadata> Cache = new();
+    private static readonly ConditionalWeakTable<CssStyleSheet, Metadata> Cache = [];
 
     public static IReadOnlyList<FontFace> GetFontFaces(CssStyleSheet styleSheet) =>
         Cache.GetValue(styleSheet, ParseMetadata).FontFaces;

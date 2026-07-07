@@ -18,9 +18,18 @@ public sealed class CssDeclarationBlock(IEnumerable<CssDeclaration> declarations
 
     public IReadOnlyList<CssDeclaration> Declarations => _declarations;
 
-    public CssDeclaration? GetLastDeclaration(string propertyName) =>
-        _declarations.LastOrDefault(declaration => 
-            string.Equals(declaration.Name, propertyName, StringComparison.OrdinalIgnoreCase));
+    public CssDeclaration? GetLastDeclaration(string propertyName)
+    {
+        // Manual reverse scan avoids the LINQ iterator/closure allocation of
+        // LastOrDefault on this per-lookup hot path.
+        for (var i = _declarations.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(_declarations[i].Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                return _declarations[i];
+        }
+
+        return null;
+    }
 
     public string? GetPropertyValue(string propertyName) => GetLastDeclaration(propertyName)?.Value.Text;
 }

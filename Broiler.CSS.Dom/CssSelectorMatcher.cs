@@ -73,16 +73,22 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
 
         var compound = StripPseudoElement(source);
         var attributes = new List<AttributeFilter>();
-        compound = AttributePattern.Replace(compound, match =>
+        // The attribute regex only ever matches when a '[' is present; skip the
+        // Replace (which otherwise scans the whole compound per element) for the
+        // common attribute-free selector.
+        if (compound.IndexOf('[') >= 0)
         {
-            attributes.Add(new AttributeFilter(
-                match.Groups["name"].Value.Trim(),
-                match.Groups["op"].Success ? match.Groups["op"].Value : null,
-                match.Groups["value"].Success
-                    ? match.Groups["value"].Value.Trim().Trim('"', '\'')
-                    : null));
-            return string.Empty;
-        });
+            compound = AttributePattern.Replace(compound, match =>
+            {
+                attributes.Add(new AttributeFilter(
+                    match.Groups["name"].Value.Trim(),
+                    match.Groups["op"].Success ? match.Groups["op"].Value : null,
+                    match.Groups["value"].Success
+                        ? match.Groups["value"].Value.Trim().Trim('"', '\'')
+                        : null));
+                return string.Empty;
+            });
+        }
 
         if (!ProcessPseudoClasses(element, ref compound, scope))
             return false;

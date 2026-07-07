@@ -459,7 +459,7 @@ public sealed partial class CssStyleEngine
     /// </summary>
     private static bool IsTwoValueDisplay(string value)
     {
-        var parts = value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+        var parts = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2)
             return false;
 
@@ -484,7 +484,7 @@ public sealed partial class CssStyleEngine
             return true;
 
         bool collapseSeen = false, wrapSeen = false;
-        foreach (var token in value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries))
+        foreach (var token in value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             switch (token)
             {
@@ -521,7 +521,7 @@ public sealed partial class CssStyleEngine
             return true;
 
         bool caseSeen = false, fullWidth = false, fullSizeKana = false;
-        foreach (var token in value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries))
+        foreach (var token in value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             switch (token)
             {
