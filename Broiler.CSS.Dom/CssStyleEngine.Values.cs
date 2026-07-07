@@ -360,13 +360,23 @@ public sealed partial class CssStyleEngine
                 return true;
 
             case "text-align":
-                // The -webkit-{left,right,center} legacy keywords are non-standard
-                // but widely supported and exercised by WPT (css-align): they both
-                // align inline content AND provide block-level alignment for in-flow
-                // block children (see CssBox justify-self resolution).
+                // CSS Text 4 §text-align: start | end | left | right | center |
+                // justify | match-parent | justify-all.  'justify-all' is the
+                // shorthand value that also justifies the last line (text-align-all
+                // + text-align-last both justify).  The -webkit-{left,right,center}
+                // legacy keywords are non-standard but widely supported and exercised
+                // by WPT (css-align): they both align inline content AND provide
+                // block-level alignment for in-flow block children (see CssBox
+                // justify-self resolution).
                 return v is "left" or "right" or "center" or "justify"
-                    or "start" or "end" or "match-parent"
+                    or "start" or "end" or "match-parent" or "justify-all"
                     or "-webkit-left" or "-webkit-right" or "-webkit-center";
+
+            case "text-align-last":
+                // CSS Text 4 §text-align-last: auto | start | end | left | right |
+                // center | justify | match-parent.
+                return v is "auto" or "start" or "end" or "left" or "right"
+                    or "center" or "justify" or "match-parent";
 
             case "text-decoration-style":
                 return v is "solid" or "double" or "dotted" or "dashed" or "wavy";

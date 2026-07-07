@@ -595,6 +595,7 @@ public sealed partial class CssStyleEngine
         "letter-spacing",
         "line-height",
         "text-align",
+        "text-align-last",
         "text-indent",
         "text-shadow",
         "text-transform",

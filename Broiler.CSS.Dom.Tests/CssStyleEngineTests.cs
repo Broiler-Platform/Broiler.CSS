@@ -854,4 +854,66 @@ public sealed class CssStyleEngineTests
 
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
+
+    // CSS Text 4 §text-align / §text-align-last (issue #1276): the value validator
+    // must accept 'justify-all' for text-align and the text-align-last keywords, so
+    // the declaration survives the cascade and reaches the renderer instead of being
+    // dropped as invalid.
+    [Theory]
+    [InlineData("justify-all")]
+    [InlineData("justify")]
+    [InlineData("start")]
+    [InlineData("end")]
+    [InlineData("match-parent")]
+    public void TextAlign_Accepts_JustifyAll_And_Standard_Values(string value)
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith($"div {{ text-align: {value}; }}");
+        Assert.Equal(value, engine.GetCascadedStyle(div)["text-align"]);
+    }
+
+    [Theory]
+    [InlineData("auto")]
+    [InlineData("start")]
+    [InlineData("end")]
+    [InlineData("left")]
+    [InlineData("right")]
+    [InlineData("center")]
+    [InlineData("justify")]
+    public void TextAlignLast_Accepts_Standard_Values(string value)
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith($"div {{ text-align-last: {value}; }}");
+        Assert.Equal(value, engine.GetCascadedStyle(div)["text-align-last"]);
+    }
+
+    [Fact]
+    public void TextAlignLast_Drops_Invalid_Value()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith("div { text-align-last: bogus; }");
+        Assert.False(engine.GetCascadedStyle(div).ContainsKey("text-align-last"));
+    }
+
+    [Fact]
+    public void TextAlignLast_Is_Inherited()
+    {
+        var (_, _, body) = NewDocument();
+        var parent = body.OwnerDocument.CreateElement("div");
+        var child = body.OwnerDocument.CreateElement("span");
+        body.AppendChild(parent);
+        parent.AppendChild(child);
+
+        var engine = EngineWith("div { text-align-last: justify; }");
+        Assert.Equal("justify", engine.GetComputedStyle(child).GetPropertyValue("text-align-last"));
+    }
 }
