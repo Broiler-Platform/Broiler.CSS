@@ -373,7 +373,7 @@ public sealed partial class CssStyleEngine
                 return v is "solid" or "double" or "dotted" or "dashed" or "wavy";
 
             case "text-transform":
-                return v is "none" or "capitalize" or "uppercase" or "lowercase" or "full-width";
+                return IsTextTransformValue(v);
 
             case "vertical-align":
                 return v is "baseline" or "sub" or "super" or "text-top"
@@ -460,6 +460,44 @@ public sealed partial class CssStyleEngine
 
         return (IsOutside(parts[0]) && IsInside(parts[1]))
             || (IsInside(parts[0]) && IsOutside(parts[1]));
+    }
+
+    // CSS Text 3 §2.1: none | [ [capitalize | uppercase | lowercase] || full-width
+    // || full-size-kana ] | math-auto. The case keywords are mutually exclusive; a
+    // valid multi-token value combines at most one case keyword with full-width
+    // and/or full-size-kana (in any order), each at most once. Accepting the full
+    // grammar keeps combinations like "capitalize full-width" and the standalone
+    // "full-size-kana"/"math-auto" from being dropped as invalid.
+    private static bool IsTextTransformValue(string value)
+    {
+        if (value is "none" or "math-auto")
+            return true;
+
+        bool caseSeen = false, fullWidth = false, fullSizeKana = false;
+        foreach (var token in value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries))
+        {
+            switch (token)
+            {
+                case "capitalize":
+                case "uppercase":
+                case "lowercase":
+                    if (caseSeen) return false;
+                    caseSeen = true;
+                    break;
+                case "full-width":
+                    if (fullWidth) return false;
+                    fullWidth = true;
+                    break;
+                case "full-size-kana":
+                    if (fullSizeKana) return false;
+                    fullSizeKana = true;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return caseSeen || fullWidth || fullSizeKana;
     }
 
     private static bool IsBorderStyleList(string value)
