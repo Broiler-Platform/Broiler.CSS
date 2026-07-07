@@ -356,6 +356,44 @@ public sealed class CssStyleEngineTests
         Assert.Equal("900", engine.GetComputedStyle(child).GetPropertyValue("font-weight"));
     }
 
+    [Theory]
+    // The size/line-height slash may carry white space on either or both sides
+    // (CSS Fonts `font` shorthand). Every spacing must expand to the same
+    // longhands — the family must never be swallowed into font-family.
+    [InlineData("50px/1 Ahem")]
+    [InlineData("50px / 1 Ahem")]
+    [InlineData("50px /1 Ahem")]
+    [InlineData("50px/ 1 Ahem")]
+    public void Font_Shorthand_Expands_With_Whitespace_Around_LineHeight_Slash(string fontValue)
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        div.ClassName = "t";
+        body.AppendChild(div);
+
+        var engine = EngineWith($".t {{ font: {fontValue}; }}");
+        var style = engine.GetComputedStyle(div);
+
+        Assert.Equal("50px", style.GetPropertyValue("font-size"));
+        Assert.Equal("1", style.GetPropertyValue("line-height"));
+        Assert.Equal("Ahem", style.GetPropertyValue("font-family"));
+    }
+
+    [Fact]
+    public void Font_Shorthand_Without_LineHeight_Keeps_Family()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        div.ClassName = "t";
+        body.AppendChild(div);
+
+        var engine = EngineWith(".t { font: italic bold 20px Ahem; }");
+        var style = engine.GetComputedStyle(div);
+
+        Assert.Equal("20px", style.GetPropertyValue("font-size"));
+        Assert.Equal("Ahem", style.GetPropertyValue("font-family"));
+    }
+
     [Fact]
     public void Computed_Style_Is_Recomputed_After_Attribute_Mutation()
     {

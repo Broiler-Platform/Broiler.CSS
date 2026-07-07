@@ -682,6 +682,17 @@ public sealed partial class CssStyleEngine
         if (tokens.Length == 0)
             return;
 
+        // The `<size> [ / <line-height> ]?` component may carry white space around
+        // the slash (`50px / 1`, `50px /1`, `50px/ 1`). SplitCssValues then yields
+        // the slash as its own token (or glued to only one side), which the size
+        // classifier below cannot recognise — it would treat `50px` as a size with
+        // no line-height and fold `/ 1 <family>` into the font-family, dropping the
+        // real family. Glue the slash back onto the size token so the canonical
+        // `size/line-height` form reaches the classifier regardless of spacing. A
+        // bare `/` token is unambiguous here: an unquoted family cannot contain one,
+        // and a quoted family is a single token from SplitCssValues.
+        tokens = NormalizeFontSlashTokens(tokens);
+
         string fontStyle = "normal";
         string fontVariant = "normal";
         string fontWeight = "normal";
@@ -749,6 +760,56 @@ public sealed partial class CssStyleEngine
         var resolvedLineHeight = !string.IsNullOrWhiteSpace(lineHeight) ? lineHeight : "normal";
         if (!computed.ContainsKey("line-height")) computed["line-height"] = resolvedLineHeight;
         if (!computed.ContainsKey("font-family")) computed["font-family"] = fontFamily;
+    }
+
+    /// <summary>
+    /// Collapses white space around the <c>size / line-height</c> slash in a
+    /// tokenized <c>font</c> shorthand so the size/line-height pair is a single
+    /// token. Handles the slash split off as its own token (<c>50px / 1</c>),
+    /// glued to the size (<c>50px/ 1</c>), or glued to the line-height
+    /// (<c>50px /1</c>). Tokens that already contain the slash (<c>50px/1</c>)
+    /// pass through unchanged.
+    /// </summary>
+    private static string[] NormalizeFontSlashTokens(string[] tokens)
+    {
+        if (Array.TrueForAll(tokens, t => t.IndexOf('/', StringComparison.Ordinal) < 0))
+            return tokens;
+
+        var result = new List<string>(tokens.Length);
+        for (int i = 0; i < tokens.Length; i++)
+        {
+            string t = tokens[i];
+
+            if (t == "/")
+            {
+                // `size / line-height` — glue onto the preceding size token and
+                // absorb the following line-height token.
+                if (result.Count > 0)
+                {
+                    string next = i + 1 < tokens.Length ? tokens[i + 1] : string.Empty;
+                    result[^1] = result[^1] + "/" + next;
+                    if (i + 1 < tokens.Length) i++;
+                    continue;
+                }
+            }
+            else if (t.StartsWith('/') && result.Count > 0)
+            {
+                // `size /line-height` — the slash+line-height glued together.
+                result[^1] = result[^1] + t;
+                continue;
+            }
+            else if (t.EndsWith('/') && i + 1 < tokens.Length)
+            {
+                // `size/ line-height` — the size+slash glued together.
+                result.Add(t + tokens[i + 1]);
+                i++;
+                continue;
+            }
+
+            result.Add(t);
+        }
+
+        return result.ToArray();
     }
 
     private static bool TryParseFontSizeAndLineHeight(string lowerToken, string originalToken, out string fontSize, out string lineHeight)
