@@ -1,0 +1,104 @@
+<Project>
+
+  <!--
+    ==================================================================
+    Broiler.Packaging.props  (CANONICAL)
+    ==================================================================
+    Shared NuGet packaging metadata for every Broiler component.
+
+    This file is the single source of truth. It is VENDORED into each
+    component at <Component>/eng/Broiler.Packaging.props by
+    scripts/sync-packaging.ps1, so every component builds and packs
+    standalone with no dependency on a parent-repo file (see
+    docs/roadmap/nuget-packaging-phase0-decisions.md, decision D0).
+
+    DO NOT edit the vendored copies by hand. Edit this canonical file
+    and re-run the sync script.
+
+    Precedence: a component's Directory.Build.props imports this file
+    FIRST, then may set its own overrides (PackageTags, Description,
+    IsPackable, RepositoryUrl) which win over the defaults below.
+    ==================================================================
+  -->
+
+  <PropertyGroup>
+    <!-- Version: lockstep across the whole suite during preview (D1). -->
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix>preview.1</VersionSuffix>
+
+    <!-- Identity -->
+    <Authors>Broiler contributors</Authors>
+    <Company>Broiler</Company>
+    <Product>Broiler</Product>
+    <Copyright>Copyright (c) Broiler contributors</Copyright>
+
+    <!-- License: SPDX expression, no embedded file needed (D3). -->
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+
+    <!-- Project / repository links. RepositoryUrl is filled by SourceLink
+         from the component's own git origin (PublishRepositoryUrl below),
+         which keeps each component self-contained. -->
+    <PackageProjectUrl>https://github.com/MaiRat</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- README + icon are packed by the ItemGroup below. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+
+    <!-- Packability by naming convention (D2/D5): every library packs
+         EXCEPT tests, demos, and diagnostics. A project can still force
+         its own value with <IsPackable> in the .csproj (evaluated after
+         this import, so it wins). Apps/tooling in src/ don't import this
+         file and are packed by nothing. -->
+    <IsPackable>true</IsPackable>
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.Tests'))">false</IsPackable>
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.Demo'))">false</IsPackable>
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.Diagnostic'))">false</IsPackable>
+    <!-- Build-time tools, benchmarks, and code generators never ship. -->
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.Benchmark'))">false</IsPackable>
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.Benchmarks'))">false</IsPackable>
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.DataTool'))">false</IsPackable>
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.Generator'))">false</IsPackable>
+    <IsPackable Condition="$(MSBuildProjectName.EndsWith('.PerfTests'))">false</IsPackable>
+
+    <!-- API docs shipped for IntelliSense. The XML-doc warnings are
+         suppressed (consistent with the existing CS1591 policy) so that
+         partial/undocumented comments don't add noise to every build:
+         CS1570 malformed XML, CS1572 stray param, CS1573 missing param,
+         CS1574 unresolved cref, CS1587 misplaced doc, CS1591 missing comment,
+         CS1734 bad paramref. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1570;CS1572;CS1573;CS1574;CS1587;CS1591;CS1734</NoWarn>
+
+    <!-- Symbol packages -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <!-- Reproducible builds + SourceLink -->
+    <Deterministic>true</Deterministic>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- Files packed into every package (only when IsPackable is true).
+       Paths are relative to THIS file so they resolve identically in
+       the canonical location and every vendored copy. -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)icon.png"
+          Pack="true" PackagePath="\" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\README.md"
+          Pack="true" PackagePath="\" Visible="false"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\README.md')" />
+    <None Include="$(MSBuildThisFileDirectory)..\THIRD_PARTY_NOTICES.md"
+          Pack="true" PackagePath="\" Visible="false"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\THIRD_PARTY_NOTICES.md')" />
+  </ItemGroup>
+
+  <!-- SourceLink provider. PrivateAssets=all keeps it out of the
+       package dependency graph. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

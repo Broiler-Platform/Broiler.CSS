@@ -1,0 +1,21 @@
+﻿<Project>
+
+  <!-- Chain to a parent Directory.Build.props when one exists (in-tree build).
+       Skipped for standalone / submodule builds. The path is captured in a
+       property first so the inner quotes don't collide with the Condition. -->
+  <PropertyGroup>
+    <BroilerParentBuildProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))</BroilerParentBuildProps>
+  </PropertyGroup>
+  <Import Project="$(BroilerParentBuildProps)" Condition="'$(BroilerParentBuildProps)' != ''" />
+
+  <!-- Broiler NuGet packaging metadata (vendored; do not edit by hand). -->
+  <Import Project="$(MSBuildThisFileDirectory)eng\Broiler.Packaging.props" />
+
+  <!-- This submodule carries a nested Broiler.DOM checkout used only as a build
+       dependency. Broiler.Dom / Broiler.Dom.Html ship from the Broiler.DOM
+       submodule, so exclude the nested copy here to avoid duplicate package ids. -->
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Replace('\','/').Contains('/Broiler.DOM/'))">
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>
