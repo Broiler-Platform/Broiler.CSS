@@ -82,10 +82,11 @@ public sealed partial class CssStyleEngine
 
     /// <summary>
     /// Reports whether an <c>@supports</c> prelude is a grammatically valid
-    /// <c>&lt;supports-condition&gt;</c>, using the same check that gates whether the
-    /// rule's contents participate in the cascade. A malformed condition (for
-    /// example a declaration missing its parentheses) is invalid and its rules do
-    /// not apply.
+    /// <c>&lt;supports-condition&gt;</c>. A malformed condition (for example a
+    /// declaration missing its parentheses) is invalid and its rules do not apply.
+    /// Note this is grammatical validity only — whether the rule's contents
+    /// participate in the cascade additionally requires the condition to evaluate
+    /// to true (an unsupported feature query is valid syntax but false).
     /// </summary>
     public static bool IsValidSupportsCondition(string condition) =>
         SupportsConditionSyntax.IsValidCondition(condition);
@@ -480,14 +481,14 @@ public sealed partial class CssStyleEngine
                     break;
 
                 case CssAtRule atRule when atRule.Name.Equals("supports", StringComparison.OrdinalIgnoreCase):
-                    // Feature detection is optimistic — we assume support for any well-formed
-                    // feature query rather than modelling which properties/values Broiler
-                    // actually implements. But an @supports rule whose condition does not match
-                    // the <supports-condition> grammar (e.g. a declaration missing its required
-                    // parentheses, or "and"/"or" mixed without grouping) has a false condition
-                    // and MUST NOT apply its rules. Gate the descent on grammatical validity so
-                    // those malformed conditions are correctly ignored.
-                    if (SupportsConditionSyntax.IsValidCondition(atRule.Prelude))
+                    // An @supports rule applies its contents only when its condition both
+                    // parses as a <supports-condition> AND evaluates to true. A malformed
+                    // condition (a declaration missing its parentheses, "and"/"or" mixed
+                    // without grouping, …) is false; so is a well-formed but unsupported
+                    // feature query — an unknown property ("unknown: green"), an invalid value
+                    // ("color: rainbow"), or a <general-enclosed> block — resolved here through
+                    // the feature-support oracle (IsFeatureQuerySupported).
+                    if (SupportsConditionSyntax.EvaluatesTrue(atRule.Prelude, IsFeatureQuerySupported))
                         CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
                     break;
             }

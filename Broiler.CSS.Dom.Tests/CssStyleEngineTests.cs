@@ -848,11 +848,58 @@ public sealed class CssStyleEngineTests
         var div = body.OwnerDocument.CreateElement("div");
         body.AppendChild(div);
 
-        // A well-formed feature query is assumed supported, so the inner rule applies.
+        // A well-formed, supported feature query evaluates true, so the inner rule applies.
         var engine = EngineWith(
             "div { color: red; } @supports (color: green) { div { color: green; } }");
 
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
+    // ── @supports condition *evaluation* (truth) ───────────────────────────
+    // A valid condition applies its rules only when it evaluates to true. These
+    // mirror the WPT css-conditional/css-supports-* family: an unsupported feature
+    // query (unknown property, invalid value) and a <general-enclosed> block are
+    // false, and boolean combinators (and/or/not) fold those results. `true` means
+    // the inner rule must win (condition evaluates true); `false` means it must not.
+    [Theory]
+    [InlineData("(color: green)", true)]                                   // 001
+    [InlineData("((color: green))", true)]                                 // 003 nested condition
+    [InlineData("(color: green !important)", true)]                        // 004 !important ignored
+    [InlineData("(color: rainbow)", false)]                                // 005 invalid <color>
+    [InlineData("(color: rainbow) or (color: green)", true)]               // 006
+    [InlineData("(color: green) or (color: rainbow)", true)]               // 007
+    [InlineData("(color: green) and (color: blue)", true)]                 // 008
+    [InlineData("(color: rainbow) and (color: blue)", false)]             // 009
+    [InlineData("(color: blue) and (color: rainbow)", false)]            // 010
+    [InlineData("(color: rainbow) or (color: iridescent) or (color: green)", true)] // 011
+    [InlineData("(color: red) and (color: green) and (color: blue)", true)]         // 012
+    [InlineData("(color: green) and (color: green) or (color: green)", false)] // 013 mixed and/or
+    [InlineData("(color: green) or (color: green) and (color: green)", false)] // 014 mixed or/and
+    [InlineData("not (color: rainbow)", true)]                             // 016
+    [InlineData("not not (color: green)", false)]                          // 017 invalid
+    [InlineData("not (not (color: green))", true)]                         // 018
+    [InlineData("not (color: rainbow) and not (color: iridescent)", false)] // 019 invalid
+    [InlineData("(unknown: green)", false)]                                // 020 unknown property
+    [InlineData("(unknown: green) or (color: green)", true)]               // 021
+    [InlineData("(unknown:) or (color: green)", true)]                     // 022 empty value
+    [InlineData("(unknown) or (color: green)", true)]                      // 023 general-enclosed
+    [InlineData("(color:) or (color: green)", true)]                       // 031 empty value
+    [InlineData("not (color: rainbow) or (color: green)", false)]          // 029 mixed not/or
+    [InlineData("(not (color: rainbow) or (color: green))", false)]        // 030 general-enclosed
+    [InlineData("not (@page)", true)]                                      // 032 not(general-enclosed)
+    [InlineData("an-extension(of some kind) or (color: green)", true)]     // 036 unknown fn or true
+    [InlineData("(color: green) or an-extension(that is [unbalanced)", false)] // 037 unbalanced
+    [InlineData("not(unknown: unknown)", false)]                           // 038 not( is a function
+    [InlineData("(color: green) or(color: blue)", false)]                  // 039 or( is a function
+    [InlineData("not ()", true)]                                           // 040 not(empty)
+    public void Supports_Rule_Applies_Only_When_Condition_Evaluates_True(string condition, bool shouldApply)
+    {
+        var (_, html, _) = NewDocument();
+        var engine = EngineWith(
+            $"html {{ color: green; }} @supports {condition} {{ html {{ color: red; }} }}");
+
+        var expected = shouldApply ? "red" : "green";
+        Assert.Equal(expected, engine.GetComputedStyle(html).GetPropertyValue("color"));
     }
 
     // CSS Text 4 §text-align / §text-align-last (issue #1276): the value validator
