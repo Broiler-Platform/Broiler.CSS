@@ -775,6 +775,26 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", cascaded["color"]);
     }
 
+    [Theory]
+    [InlineData("::backdrop")]
+    [InlineData("::before")]
+    [InlineData("::marker")]
+    public void GetCascadedStyle_Matches_Bare_Pseudo_Element_As_Universal(string pseudoElement)
+    {
+        // A bare pseudo-element selector (e.g. `::backdrop { … }`) is equivalent
+        // to `*::backdrop` and must match the pseudo-element of any element. The
+        // empty base selector was previously rejected, so author `::backdrop`
+        // rules (WPT css-position replaced-object-backdrop) were dropped.
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith($"{pseudoElement} {{ color: blue; }}");
+        var cascaded = engine.GetCascadedStyle(div, pseudoElement);
+
+        Assert.Equal("blue", cascaded["color"]);
+    }
+
     [Fact]
     public void GetCascadedStyle_Expands_MultiValue_Pseudo_Element_Borders()
     {

@@ -685,7 +685,13 @@ public sealed partial class CssStyleEngine
                 return false;
 
             baseSelector = selector[..doubleColonIndex].TrimEnd();
-            return baseSelector.Length > 0;
+            // A bare pseudo-element selector (e.g. `::backdrop`) has an empty base
+            // and is equivalent to `*::backdrop`: it targets the pseudo-element of
+            // any originating element. Match it as the universal selector rather
+            // than rejecting it (which dropped author `::backdrop { … }` rules).
+            if (baseSelector.Length == 0)
+                baseSelector = "*";
+            return true;
         }
 
         var singleColonSuffix = ":" + normalized;
@@ -693,7 +699,9 @@ public sealed partial class CssStyleEngine
             return false;
 
         baseSelector = selector[..^singleColonSuffix.Length].TrimEnd();
-        return baseSelector.Length > 0;
+        if (baseSelector.Length == 0)
+            baseSelector = "*";
+        return true;
     }
 
     private static bool IsPropertyAllowedForPseudoElement(string? pseudoElement, string propertyName) =>
