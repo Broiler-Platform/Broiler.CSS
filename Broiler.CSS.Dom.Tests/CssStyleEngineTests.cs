@@ -255,6 +255,71 @@ public sealed class CssStyleEngineTests
     }
 
     [Fact]
+    public void Env_Unknown_Name_Falls_Back_To_Provided_Default()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        // env(test) is not a UA-defined variable, so the comma-separated fallback
+        // is substituted (WPT css-env/fallback-nested-var, with the fallback here
+        // a plain value rather than a nested var()).
+        var engine = EngineWith("div { color: env(test, crimson); }");
+
+        Assert.Equal("crimson", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
+    [Fact]
+    public void Env_Unknown_Name_Resolves_Nested_Var_Fallback()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        // The env() fallback may itself contain a var() reference, which must be
+        // resolved (WPT css-env/fallback-nested-var).
+        var engine = EngineWith(
+            "div { --main: rgb(0, 128, 0); color: env(test, var(--main)); }");
+
+        Assert.Equal("rgb(0, 128, 0)", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
+    [Fact]
+    public void Env_Unknown_Name_Without_Fallback_Is_Invalid_And_Overrides_Previous()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        // An unknown env() with no fallback is invalid at computed-value time. The
+        // second declaration still wins the cascade over `green`, so the property
+        // resets to its initial value rather than reviving the earlier declaration
+        // (WPT css-env/unknown-env-names-override-previous).
+        var engine = EngineWith(
+            "div { background-color: green; background-color: env(unknown); }");
+
+        var bg = engine.GetComputedStyle(div).GetPropertyValue("background-color");
+        Assert.DoesNotContain("green", bg);
+        Assert.DoesNotContain("env(", bg);
+    }
+
+    [Fact]
+    public void Env_Reference_Is_A_Supported_Feature_Query()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        // @supports (property: env(name)) is true: env() is valid declaration
+        // syntax regardless of whether the name resolves, so the guarded rule
+        // applies (WPT css-env/at-supports).
+        var engine = EngineWith(
+            "@supports (background-color: env(test)) { div { color: rgb(0, 128, 0); } }");
+
+        Assert.Equal("rgb(0, 128, 0)", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
+    [Fact]
     public void Cyclic_Custom_Properties_Resolve_To_Invalid_Without_Exhausting_Memory()
     {
         var (_, html, body) = NewDocument();

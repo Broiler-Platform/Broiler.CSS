@@ -91,7 +91,7 @@ public sealed partial class CssStyleEngine
 
             if (!computed.TryGetValue(key, out var value)
                 || string.IsNullOrEmpty(value)
-                || value.IndexOf("var(", StringComparison.OrdinalIgnoreCase) < 0)
+                || !ContainsSubstitutionFunction(value))
             {
                 continue;
             }
@@ -112,7 +112,7 @@ public sealed partial class CssStyleEngine
     {
         if (string.IsNullOrEmpty(value)
             || depth >= 8
-            || value.IndexOf("var(", StringComparison.OrdinalIgnoreCase) < 0)
+            || !ContainsSubstitutionFunction(value))
         {
             return value;
         }
@@ -123,24 +123,31 @@ public sealed partial class CssStyleEngine
 
         while (position < value.Length)
         {
-            int varIndex = value.IndexOf("var(", position, StringComparison.OrdinalIgnoreCase);
-            if (varIndex < 0)
+            int fnIndex = FindNextSubstitutionFunction(value, position, out bool isEnv);
+            if (fnIndex < 0)
             {
                 sb.Append(value, position, value.Length - position);
                 break;
             }
 
-            sb.Append(value, position, varIndex - position);
+            sb.Append(value, position, fnIndex - position);
 
-            int openParenIndex = varIndex + 3;
+            // Both "var(" and "env(" carry a 3-character name before the '('.
+            int openParenIndex = fnIndex + 3;
             int closeParenIndex = FindMatchingClosingParen(value, openParenIndex);
             if (closeParenIndex < 0)
             {
                 string inner = value[(openParenIndex + 1)..];
-                string recovered = ResolveVarFunction(inner, computed, depth + 1, visiting);
-                if (recovered == $"var({inner})")
+                string recovered = isEnv
+                    ? ResolveEnvFunction(inner, computed, depth + 1, visiting)
+                    : ResolveVarFunction(inner, computed, depth + 1, visiting);
+                if (recovered == $"{(isEnv ? "env" : "var")}({inner})")
                 {
-                    sb.Append(value, varIndex, value.Length - varIndex);
+                    sb.Append(value, fnIndex, value.Length - fnIndex);
+                }
+                else if (recovered == CustomPropertyInvalidMarker)
+                {
+                    return CustomPropertyInvalidMarker;
                 }
                 else
                 {
@@ -150,16 +157,16 @@ public sealed partial class CssStyleEngine
                 break;
             }
 
-            string varFunction = value.Substring(varIndex, closeParenIndex - varIndex + 1);
-            string replacement = ResolveVarFunction(
-                value.Substring(openParenIndex + 1, closeParenIndex - openParenIndex - 1),
-                computed,
-                depth + 1,
-                visiting);
+            string function = value.Substring(fnIndex, closeParenIndex - fnIndex + 1);
+            string functionInner =
+                value.Substring(openParenIndex + 1, closeParenIndex - openParenIndex - 1);
+            string replacement = isEnv
+                ? ResolveEnvFunction(functionInner, computed, depth + 1, visiting)
+                : ResolveVarFunction(functionInner, computed, depth + 1, visiting);
 
-            if (replacement == varFunction)
+            if (replacement == function)
             {
-                sb.Append(varFunction);
+                sb.Append(function);
             }
             else if (replacement == CustomPropertyInvalidMarker)
             {
@@ -240,6 +247,93 @@ public sealed partial class CssStyleEngine
         return $"var({inner})";
     }
 
+    // ---- env() resolution --------------------------------------------------
+
+    // True when the value contains a var() or env() substitution function whose
+    // resolution has been deferred to computed-value time.
+    private static bool ContainsSubstitutionFunction(string value) =>
+        value.IndexOf("var(", StringComparison.OrdinalIgnoreCase) >= 0
+        || value.IndexOf("env(", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    // Index of the earliest var()/env() function at or after <paramref name="start"/>,
+    // or -1 if neither occurs. <paramref name="isEnv"/> reports which one won.
+    private static int FindNextSubstitutionFunction(string value, int start, out bool isEnv)
+    {
+        int varIndex = value.IndexOf("var(", start, StringComparison.OrdinalIgnoreCase);
+        int envIndex = value.IndexOf("env(", start, StringComparison.OrdinalIgnoreCase);
+
+        if (envIndex >= 0 && (varIndex < 0 || envIndex < varIndex))
+        {
+            isEnv = true;
+            return envIndex;
+        }
+
+        isEnv = false;
+        return varIndex;
+    }
+
+    // Resolves an env() reference (CSS Environment Variables §env). Broiler models
+    // the UA-defined variables that have a fixed value in a headless desktop
+    // context (the safe-area insets, which are 0px with no notch); any other name
+    // is unknown. An unknown env() substitutes its comma-separated fallback when
+    // one is present (which may itself contain var()/env()), and is otherwise
+    // invalid at computed-value time — the guaranteed-invalid value, which resets
+    // the referencing property to its initial value rather than reviving an
+    // earlier cascaded declaration.
+    private static string ResolveEnvFunction(
+        string inner,
+        Dictionary<string, string> computed,
+        int depth,
+        HashSet<string>? visiting = null)
+    {
+        string nameSpec = inner.Trim();
+        string fallback = string.Empty;
+        bool hasFallback = false;
+
+        int commaIndex = FindTopLevelChar(inner, ',');
+        if (commaIndex >= 0)
+        {
+            nameSpec = inner[..commaIndex].Trim();
+            fallback = inner[(commaIndex + 1)..].Trim();
+            hasFallback = true;
+        }
+
+        // A dimensional env() name may carry integer indices
+        // (e.g. env(viewport-segment-width 0 0)); the leading identifier names it.
+        string name = nameSpec;
+        int firstWhitespace = nameSpec.IndexOfAny(new[] { ' ', '\t', '\n', '\r', '\f' });
+        if (firstWhitespace >= 0)
+            name = nameSpec[..firstWhitespace];
+
+        if (TryGetUaEnvironmentValue(name, out var uaValue))
+            return uaValue;
+
+        if (hasFallback)
+            return ResolveKnownCustomProperties(fallback, computed, depth, visiting);
+
+        return CustomPropertyInvalidMarker;
+    }
+
+    private static bool TryGetUaEnvironmentValue(string name, out string value)
+    {
+        switch (name.ToLowerInvariant())
+        {
+            case "safe-area-inset-top":
+            case "safe-area-inset-right":
+            case "safe-area-inset-bottom":
+            case "safe-area-inset-left":
+            case "safe-area-max-inset-top":
+            case "safe-area-max-inset-right":
+            case "safe-area-max-inset-bottom":
+            case "safe-area-max-inset-left":
+                value = "0px";
+                return true;
+            default:
+                value = string.Empty;
+                return false;
+        }
+    }
+
     private static int FindMatchingClosingParen(string value, int openParenIndex)
     {
         int depth = 0;
@@ -295,9 +389,9 @@ public sealed partial class CssStyleEngine
         if (v is "inherit" or "initial" or "unset" or "revert")
             return true;
 
-        // Custom-property references are validated after substitution, not during
-        // raw cascade, so keep them for the later var() resolution step.
-        if (v.Contains("var(", StringComparison.OrdinalIgnoreCase))
+        // Custom-property references and env() are validated after substitution,
+        // not during raw cascade, so keep them for the later resolution step.
+        if (ContainsSubstitutionFunction(v))
             return true;
 
         switch (property.ToLowerInvariant())

@@ -42,7 +42,10 @@ public sealed partial class CssStyleEngine
         // supported declaration per CSS Properties & Values.
         if (property.StartsWith("--", StringComparison.Ordinal))
             return true;
-        if (value.Contains("var(", StringComparison.OrdinalIgnoreCase))
+        // var()/env() substitution functions are always valid declaration syntax;
+        // whether they resolve is a computed-value-time question @supports does not ask.
+        if (value.Contains("var(", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("env(", StringComparison.OrdinalIgnoreCase))
             return true;
 
         if (!IsKnownCssProperty(property))
