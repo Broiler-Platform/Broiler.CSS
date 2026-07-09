@@ -247,7 +247,7 @@ public sealed partial class CssStyleEngine
     /// fallback), keeping only recognizable lengths. Exposed as the single canonical
     /// implementation so bridge/layout consumers no longer maintain a private copy.
     /// </summary>
-    public static void ResolveLengthAttrFunctions(Dictionary<string, string> computed, DomElement element)
+    public static void ResolveLengthAttrFunctions(IDictionary<string, string> computed, DomElement element)
     {
         foreach (var key in computed.Keys.ToList())
         {
