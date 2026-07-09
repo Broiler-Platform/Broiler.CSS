@@ -39,7 +39,11 @@ public sealed class CssArchitectureTests
             .SelectMany(GetMemberTypes)
             .Where(static type =>
                 type.Namespace?.StartsWith("Broiler.", StringComparison.Ordinal) == true &&
-                type.Namespace != "Broiler.CSS")
+                type.Namespace != "Broiler.CSS" &&
+                // The CSS component's own sub-namespaces (e.g. Broiler.CSS.Cssom) are
+                // not foreign-component leaks. The kernel has no project references,
+                // so it can only ever expose its own namespaces here.
+                !type.Namespace.StartsWith("Broiler.CSS.", StringComparison.Ordinal))
             .Select(static type => type.FullName)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static name => name, StringComparer.Ordinal)

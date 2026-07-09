@@ -241,7 +241,13 @@ public sealed partial class CssStyleEngine
 
     // ---- attr() length substitution ---------------------------------------
 
-    private static void ResolveLengthAttrFunctions(Dictionary<string, string> computed, DomElement element)
+    /// <summary>
+    /// Substitutes <c>attr(&lt;name&gt; type(&lt;length&gt;) [, &lt;fallback&gt;])</c>
+    /// references in a computed-value map with the element's attribute value (or the
+    /// fallback), keeping only recognizable lengths. Exposed as the single canonical
+    /// implementation so bridge/layout consumers no longer maintain a private copy.
+    /// </summary>
+    public static void ResolveLengthAttrFunctions(Dictionary<string, string> computed, DomElement element)
     {
         foreach (var key in computed.Keys.ToList())
         {
@@ -500,110 +506,11 @@ public sealed partial class CssStyleEngine
 
     // ---- Property metadata -------------------------------------------------
 
-    private static readonly Dictionary<string, string> CssInitialValues = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["display"] = "inline",
-        ["position"] = "static",
-        ["float"] = "none",
-        ["visibility"] = "visible",
-        ["overflow"] = "visible",
-        ["overflow-x"] = "visible",
-        ["overflow-y"] = "visible",
-        ["text-transform"] = "none",
-        ["text-decoration"] = "none",
-        ["text-align"] = "start",
-        ["text-indent"] = "0px",
-        ["text-shadow"] = "none",
-        ["white-space"] = "normal",
-        ["cursor"] = "auto",
-        ["font-style"] = "normal",
-        ["font-variant"] = "normal",
-        ["font-weight"] = "normal",
-        ["font-size"] = "16px",
-        ["font-family"] = "serif",
-        ["line-height"] = "normal",
-        ["letter-spacing"] = "normal",
-        ["word-spacing"] = "normal",
-        ["color"] = "rgb(0, 0, 0)",
-        ["background-color"] = "rgba(0, 0, 0, 0)",
-        ["background-image"] = "none",
-        ["background-position"] = "0% 0%",
-        ["background-repeat"] = "repeat",
-        ["margin"] = "0px",
-        ["margin-top"] = "0px",
-        ["margin-right"] = "0px",
-        ["margin-bottom"] = "0px",
-        ["margin-left"] = "0px",
-        ["padding"] = "0px",
-        ["padding-top"] = "0px",
-        ["padding-right"] = "0px",
-        ["padding-bottom"] = "0px",
-        ["padding-left"] = "0px",
-        ["border-style"] = "none",
-        ["border-width"] = "0px",
-        ["border-color"] = "rgb(0, 0, 0)",
-        ["border-top-width"] = "0px",
-        ["border-right-width"] = "0px",
-        ["border-bottom-width"] = "0px",
-        ["border-left-width"] = "0px",
-        ["border-top-style"] = "none",
-        ["border-right-style"] = "none",
-        ["border-bottom-style"] = "none",
-        ["border-left-style"] = "none",
-        ["border-top-color"] = "rgb(0, 0, 0)",
-        ["border-right-color"] = "rgb(0, 0, 0)",
-        ["border-bottom-color"] = "rgb(0, 0, 0)",
-        ["border-left-color"] = "rgb(0, 0, 0)",
-        ["border-collapse"] = "separate",
-        ["border-spacing"] = "0px",
-        ["opacity"] = "1",
-        ["vertical-align"] = "baseline",
-        ["clear"] = "none",
-        ["z-index"] = "auto",
-        ["top"] = "auto",
-        ["right"] = "auto",
-        ["bottom"] = "auto",
-        ["left"] = "auto",
-        ["width"] = "auto",
-        ["height"] = "auto",
-        ["min-width"] = "0px",
-        ["min-height"] = "0px",
-        ["max-width"] = "none",
-        ["max-height"] = "none",
-        ["box-sizing"] = "content-box",
-        ["list-style-type"] = "disc",
-        ["list-style-position"] = "outside",
-        ["content"] = "normal",
-        ["transform"] = "none",
-        ["mix-blend-mode"] = "normal",
-        ["background-blend-mode"] = "normal",
-        ["isolation"] = "auto",
-        ["filter"] = "none",
-        ["writing-mode"] = "horizontal-tb",
-        ["zoom"] = "1",
-    };
+    // Canonical initial-value and inherited-property tables live in the shared
+    // CssComputedDefaults so the engine and bridge/layout consumers cannot drift.
+    private static readonly IReadOnlyDictionary<string, string> CssInitialValues = CssComputedDefaults.InitialValues;
 
-    private static readonly HashSet<string> CssInheritedProperties = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "color",
-        "cursor",
-        "font-family",
-        "font-size",
-        "font-style",
-        "font-variant",
-        "font-weight",
-        "letter-spacing",
-        "line-height",
-        "text-align",
-        "text-align-last",
-        "text-indent",
-        "text-shadow",
-        "text-transform",
-        "visibility",
-        "white-space",
-        "word-spacing",
-        "writing-mode",
-    };
+    private static readonly IReadOnlySet<string> CssInheritedProperties = CssComputedDefaults.InheritedProperties;
 
     [GeneratedRegex(@"attr\(\s*(?<name>[A-Za-z_][A-Za-z0-9_-]*)\s+type\(\s*<length>\s*\)\s*(?:,\s*(?<fallback>[^)]+?))?\s*\)", RegexOptions.IgnoreCase | RegexOptions.Compiled, "de-DE")]
     private static partial Regex LengthAttrRegex();

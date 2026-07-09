@@ -378,7 +378,12 @@ public sealed partial class CssStyleEngine
     /// else accepts any non-empty value. The supplied value must already have its
     /// <c>!important</c> flag stripped (the engine tracks importance separately).
     /// </summary>
-    private static bool IsAcceptableDeclarationValue(string property, string value)
+    /// <remarks>
+    /// Exposed to consumers (e.g. the HtmlBridge inline-style ingestion path)
+    /// through <see cref="CssDeclarationValidator"/> so they no longer maintain a
+    /// parallel, narrower copy of this closed-keyword table.
+    /// </remarks>
+    internal static bool IsAcceptableDeclarationValue(string property, string value)
     {
         if (string.IsNullOrWhiteSpace(value))
             return false;
