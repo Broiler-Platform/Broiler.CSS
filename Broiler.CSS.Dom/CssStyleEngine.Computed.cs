@@ -502,6 +502,8 @@ public sealed partial class CssStyleEngine
             _cache.Clear();
         if (_declaredCascadeCache.Count > 0)
             _declaredCascadeCache.Clear();
+        if (_sparseCache.Count > 0)
+            _sparseCache.Clear();
     }
 
     // ---- Property metadata -------------------------------------------------

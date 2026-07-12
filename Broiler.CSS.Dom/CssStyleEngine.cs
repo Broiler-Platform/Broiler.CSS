@@ -25,6 +25,11 @@ public sealed partial class CssStyleEngine
     private readonly CssSelectorMatcher _matcher;
     private readonly List<StyleSheetEntry> _sheets = [];
     private readonly Dictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = [];
+    // Sparse computed-style memo: the specified + sparse-inheritance projection (no
+    // initial-value backfill) that the HtmlBridge's GetComputedProps consumes. Keyed by
+    // element (principal box; pseudo-elements are not on this recursion). Cleared with
+    // _cache in InvalidateAll, so it shares the exact same correctness lifecycle.
+    private readonly Dictionary<(DomElement Element, string? Pseudo), IReadOnlyDictionary<string, string>> _sparseCache = [];
     // Memoizes the declared cascade winners (stylesheets + optional inline) per
     // (element, pseudo, includeInline). The declared cascade is the hot inner step
     // shared by every GetComputedStyle/GetCascadedStyle/GetCascadedDeclaredValues
@@ -40,9 +45,36 @@ public sealed partial class CssStyleEngine
     private int _cacheGeneration;
     private readonly HashSet<DomDocument> _observedDocuments = [];
     private CssEnvironment _environment = CssEnvironment.Headless;
+    // Host-supplied override for an element's inline declaration block. The HtmlBridge
+    // sets this to its live ElementRuntimeState inline map (the authoritative inline the
+    // JS `el.style.X=` setters and the anchor resolver mutate, which never reaches the DOM
+    // `style` attribute). Null = read the `style` attribute as usual.
+    private Func<DomElement, string?>? _inlineStyleProvider;
 
     public CssStyleEngine(ICssSelectorStateProvider? stateProvider = null) =>
         _matcher = new CssSelectorMatcher(stateProvider);
+
+    /// <summary>
+    /// Overrides the source of each element's inline declaration block. When set, the
+    /// cascade reads inline style from <paramref name="provider"/> (returning the inline
+    /// CSS text, or <c>null</c> for none) instead of the element's <c>style</c> attribute.
+    /// The HtmlBridge uses this to feed its live ElementRuntimeState inline map — the
+    /// authoritative inline source its JS setters and anchor resolver mutate but which
+    /// never reaches the DOM <c>style</c> attribute. Invalidates cached results, since the
+    /// inline source feeding the cascade has changed.
+    /// </summary>
+    public void SetInlineStyleSource(Func<DomElement, string?>? provider)
+    {
+        _inlineStyleProvider = provider;
+        InvalidateAll();
+    }
+
+    /// <summary>
+    /// Clears all memoized cascade/computed-style results. The HtmlBridge calls this when
+    /// it mutates the inline source supplied via <see cref="SetInlineStyleSource"/> — a
+    /// change the engine's DOM-mutation subscription does not observe.
+    /// </summary>
+    public void InvalidateComputedStyleCaches() => InvalidateAll();
 
     /// <summary>Registers a parsed stylesheet under the given cascade origin.</summary>
     public void AddStyleSheet(CssStyleSheet sheet, CssOrigin origin = CssOrigin.Author)
@@ -141,20 +173,34 @@ public sealed partial class CssStyleEngine
     /// style needs; it differs from <see cref="GetComputedStyle"/> only by skipping the
     /// initial-value backfill. The result is a fresh, caller-owned map (not cached and not
     /// shared) — callers that need memoization cache it on their side.
+    /// <param name="sparseInheritance">When <c>true</c>, inherited properties are backfilled
+    /// from the parent's <em>sparse</em> projection (a nowhere-declared inherited property stays
+    /// absent) rather than the parent's full computed style. This is the "specified + sparse
+    /// inheritance" view the HtmlBridge's layout/anchor consumers depend on; the default
+    /// (<c>false</c>) keeps the full-inheritance behaviour.</param>
     /// </remarks>
     public IReadOnlyDictionary<string, string> GetSparseComputedStyle(
         DomElement element,
-        string? pseudoElement = null)
+        string? pseudoElement = null,
+        bool sparseInheritance = false)
     {
         if (element is null)
             return EmptyReadOnlyMap;
 
         ObserveDocument(element);
+
+        // Principal-box sparse inheritance goes through the cached recursion so the ancestor
+        // chain is materialised once per invalidation generation (bridge callers query many
+        // elements of the same subtree). Pseudo-elements are off this recursion.
+        if (sparseInheritance && pseudoElement is null)
+            return GetSparseComputedStyleInternal(element, []);
+
         return ComputeStyle(
             element,
             NormalizePseudoElement(pseudoElement),
             [],
-            backfillInitials: false);
+            backfillInitials: false,
+            sparseInheritance: sparseInheritance);
     }
 
     /// <summary>
@@ -351,23 +397,43 @@ public sealed partial class CssStyleEngine
         return snapshot;
     }
 
+    // Cached sparse projection used as the inheritance source when sparseInheritance is on.
+    // Mirrors GetComputedStyleInternal (element-keyed, cleared by InvalidateAll) so the
+    // sparse recursion stays ~O(N) instead of recomputing every ancestor per query.
+    private IReadOnlyDictionary<string, string> GetSparseComputedStyleInternal(
+        DomElement element, HashSet<DomElement> ancestorsInProgress)
+    {
+        var key = ((DomElement, string?))(element, null);
+        if (_sparseCache.TryGetValue(key, out var cached))
+            return cached;
+
+        IReadOnlyDictionary<string, string> computed = ComputeStyle(
+            element, pseudoElement: null, ancestorsInProgress,
+            backfillInitials: false, sparseInheritance: true);
+        _sparseCache[key] = computed;
+        return computed;
+    }
+
     private Dictionary<string, string> ComputeStyle(
         DomElement element,
         string? pseudoElement,
         HashSet<DomElement> ancestorsInProgress,
-        bool backfillInitials = true)
+        bool backfillInitials = true,
+        bool sparseInheritance = false)
     {
         var computed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        // Inheritance source: the parent element's computed style. Guard against
-        // cycles in malformed trees.
+        // Inheritance source: the parent element's computed style (full), or its sparse
+        // projection when sparseInheritance is set. Guard against cycles in malformed trees.
         var parentElement = ParentElement(element);
         IReadOnlyDictionary<string, string>? parentProps = null;
         if (parentElement is not null && ancestorsInProgress.Add(parentElement))
         {
             try
             {
-                parentProps = GetComputedStyleInternal(parentElement, ancestorsInProgress).AsMap();
+                parentProps = sparseInheritance
+                    ? GetSparseComputedStyleInternal(parentElement, ancestorsInProgress)
+                    : GetComputedStyleInternal(parentElement, ancestorsInProgress).AsMap();
             }
             finally
             {
@@ -476,7 +542,9 @@ public sealed partial class CssStyleEngine
 
         if (includeInlineStyle && pseudoElement is null)
         {
-            var inline = Attr(element, "style");
+            var inline = _inlineStyleProvider is { } inlineProvider
+                ? inlineProvider(element)
+                : Attr(element, "style");
             if (!string.IsNullOrEmpty(inline))
             {
                 foreach (var (name, value, important) in ParseDeclarations(inline))
