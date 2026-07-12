@@ -37,4 +37,17 @@ public sealed class CssPropertyNamesTests
     [InlineData("color")]
     public void CamelThenKebab_RoundTrips_For_Standard_And_Prefixed_Names(string css)
         => Assert.Equal(css, CssPropertyNames.ToCssPropertyName(CssPropertyNames.ToDomPropertyName(css)));
+
+    [Theory]
+    [InlineData("-webkit-transform", "transform")]
+    [InlineData("-moz-box-shadow", "box-shadow")]
+    [InlineData("-ms-flex", "flex")]
+    [InlineData("-o-transition", "transition")]
+    [InlineData("-WEBKIT-Transform", "Transform")] // prefix match is case-insensitive; remainder verbatim
+    [InlineData("transform", "transform")] // no prefix → unchanged
+    [InlineData("--custom-prop", "--custom-prop")] // custom property is not a vendor prefix
+    [InlineData("color", "color")]
+    [InlineData("", "")]
+    public void StripVendorPrefix_Removes_Known_Prefixes_Only(string property, string expected)
+        => Assert.Equal(expected, CssPropertyNames.StripVendorPrefix(property));
 }
