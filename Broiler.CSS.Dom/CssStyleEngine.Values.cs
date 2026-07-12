@@ -659,6 +659,18 @@ public sealed partial class CssStyleEngine
 
     // ---- Shorthand expansion ----------------------------------------------
 
+    /// <summary>
+    /// Public entry point to the CSS shorthand-expansion pass. Given a property map, fills in
+    /// longhand properties for any shorthands present (font, margin/padding/border families, the
+    /// CSS-logical box shorthands, inset, background, and outline). Additive and idempotent: it
+    /// never removes the shorthand key and never overwrites a longhand that is already present.
+    /// This is the single canonical implementation — <c>Broiler.HtmlBridge</c> routes its
+    /// computed/declared style maps through it instead of a bridge-private copy that could drift
+    /// (HtmlBridge DOM/CSS promotion roadmap, Phase 2).
+    /// </summary>
+    public static void ExpandShorthands(Dictionary<string, string> declarations) =>
+        ExpandCssShorthands(declarations);
+
     private static void ExpandCssShorthands(Dictionary<string, string> computed)
     {
         if (computed.TryGetValue("font", out var fontVal))
