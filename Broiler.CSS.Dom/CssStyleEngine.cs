@@ -605,7 +605,7 @@ public sealed partial class CssStyleEngine
         // comparison resolve shorthand-vs-longhand precedence by source order.
         AddBoxShorthandLonghandSlots(winners, property, slot);
 
-        var unprefixed = StripVendorPrefix(property);
+        var unprefixed = CssPropertyNames.StripVendorPrefix(property);
         if (!string.Equals(unprefixed, property, StringComparison.Ordinal))
         {
             var aliasSlot = new CascadeSlot(value, CascadeRank(origin, important), specificity, order);
@@ -677,19 +677,6 @@ public sealed partial class CssStyleEngine
         var block = new CssParser().ParseDeclarations(declarationText);
         foreach (var declaration in block.Declarations)
             yield return (declaration.Name, declaration.Value.Text, declaration.Important);
-    }
-
-    private static string StripVendorPrefix(string property)
-    {
-        if (property.StartsWith("-webkit-", StringComparison.OrdinalIgnoreCase))
-            return property[8..];
-        if (property.StartsWith("-moz-", StringComparison.OrdinalIgnoreCase))
-            return property[5..];
-        if (property.StartsWith("-ms-", StringComparison.OrdinalIgnoreCase))
-            return property[4..];
-        if (property.StartsWith("-o-", StringComparison.OrdinalIgnoreCase))
-            return property[3..];
-        return property;
     }
 
     // ---- Pseudo-element targeting -----------------------------------------

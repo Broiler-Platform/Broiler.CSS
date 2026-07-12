@@ -1,3 +1,4 @@
+using System;
 using System.Text;
 
 namespace Broiler.CSS;
@@ -12,7 +13,9 @@ namespace Broiler.CSS;
 ///
 /// This is the single canonical home for the mapping; <c>Broiler.HtmlBridge</c>'s
 /// CSSOM wrappers route through it instead of each carrying a private copy
-/// (HtmlBridge DOM/CSS promotion roadmap, Phase 1 slice 2).
+/// (HtmlBridge DOM/CSS promotion roadmap, Phase 1 slice 2). It also owns the
+/// vendor-prefix normalization (<see cref="StripVendorPrefix"/>) the bridge and
+/// the cascade engine previously duplicated.
 /// </summary>
 public static class CssPropertyNames
 {
@@ -57,5 +60,25 @@ public static class CssPropertyNames
             upper = false;
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Strips a leading CSS vendor prefix (<c>-webkit-</c>, <c>-moz-</c>, <c>-ms-</c>,
+    /// <c>-o-</c>) from a kebab-case property name, returning the unprefixed
+    /// equivalent (e.g. <c>-webkit-transform</c> → <c>transform</c>). Returns the
+    /// name unchanged when it carries no recognized vendor prefix. The prefix match
+    /// is case-insensitive; the remainder is returned verbatim.
+    /// </summary>
+    public static string StripVendorPrefix(string property)
+    {
+        if (property.StartsWith("-webkit-", StringComparison.OrdinalIgnoreCase))
+            return property[8..];
+        if (property.StartsWith("-moz-", StringComparison.OrdinalIgnoreCase))
+            return property[5..];
+        if (property.StartsWith("-ms-", StringComparison.OrdinalIgnoreCase))
+            return property[4..];
+        if (property.StartsWith("-o-", StringComparison.OrdinalIgnoreCase))
+            return property[3..];
+        return property;
     }
 }
