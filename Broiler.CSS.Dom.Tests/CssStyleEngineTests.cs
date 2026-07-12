@@ -1152,4 +1152,56 @@ public sealed class CssStyleEngineTests
         var engine = EngineWith("div { color: red; }");
         Assert.Empty(engine.GetSparseComputedStyle(null!));
     }
+
+    [Fact]
+    public void GetSparseComputedStyle_SparseInheritance_Omits_Nowhere_Declared_Inherited_Property()
+    {
+        var (_, _, body) = NewDocument();
+        var parent = body.OwnerDocument.CreateElement("div");
+        var child = body.OwnerDocument.CreateElement("span");
+        body.AppendChild(parent);
+        parent.AppendChild(child);
+
+        // Only `color` is declared (on the parent); `visibility` is inherited but declared
+        // nowhere on the ancestor chain.
+        var engine = EngineWith("div { color: purple; }");
+
+        var full = engine.GetSparseComputedStyle(child);                          // default: full inheritance
+        var sparse = engine.GetSparseComputedStyle(child, sparseInheritance: true);
+
+        // An inherited property DECLARED on an ancestor propagates in both modes.
+        Assert.Equal("purple", full["color"]);
+        Assert.Equal("purple", sparse["color"]);
+
+        // A nowhere-declared inherited property materialises under FULL inheritance (from the
+        // parent's full computed style, which carries root initials) but stays ABSENT under
+        // SPARSE inheritance — the class-2 distinction the bridge's GetComputedProps relies on.
+        Assert.True(full.ContainsKey("visibility"));
+        Assert.False(sparse.ContainsKey("visibility"));
+
+        // Sparse inheritance still omits the initial backfill for non-inherited props.
+        Assert.False(sparse.ContainsKey("display"));
+    }
+
+    [Fact]
+    public void GetSparseComputedStyle_SparseInheritance_Propagates_Declared_Value_Down_Ancestor_Chain()
+    {
+        var (_, _, body) = NewDocument();
+        var grandparent = body.OwnerDocument.CreateElement("div");
+        grandparent.ClassName = "gp";
+        var parent = body.OwnerDocument.CreateElement("div");
+        var child = body.OwnerDocument.CreateElement("span");
+        body.AppendChild(grandparent);
+        grandparent.AppendChild(parent);
+        parent.AppendChild(child);
+
+        var engine = EngineWith(".gp { color: teal; }");
+
+        // `color` declared on the grandparent propagates two levels down under sparse
+        // inheritance (exercising the cached sparse recursion up the ancestor chain),
+        // while a nowhere-declared inherited property stays absent.
+        var sparse = engine.GetSparseComputedStyle(child, sparseInheritance: true);
+        Assert.Equal("teal", sparse["color"]);
+        Assert.False(sparse.ContainsKey("visibility"));
+    }
 }
