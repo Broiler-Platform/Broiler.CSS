@@ -122,6 +122,42 @@ public sealed partial class CssStyleEngine
     }
 
     /// <summary>
+    /// Returns the full computed-style pipeline for <paramref name="element"/> —
+    /// cascade winners (stylesheets + inline), custom-property/<c>var()</c> resolution,
+    /// CSS-wide keyword handling, shorthand expansion, <c>attr()</c> length substitution,
+    /// relative font-weight resolution, inheritance backfill, form-control size synthesis
+    /// and logical-size aliases — but <em>without</em> the initial-value backfill that
+    /// <see cref="GetComputedStyle"/> applies. An undeclared, non-inherited property is
+    /// therefore <em>absent</em> from the returned map (reads back as <c>null</c>) instead
+    /// of resolving to its initial value.
+    /// </summary>
+    /// <remarks>
+    /// This is the "specified + inherited, no initials" view that layout-adjacent bridge
+    /// consumers (anchor positioning, sticky, position-area, hit-testing) depend on: their
+    /// branch logic keys on a property being undeclared (<c>null</c>) rather than sitting at
+    /// its initial value, so the full-initials <see cref="GetComputedStyle"/> map would flip
+    /// those branches. It differs from <see cref="GetCascadedStyle"/> by performing the
+    /// inheritance backfill, form-control sizing, and logical-size aliasing that computed
+    /// style needs; it differs from <see cref="GetComputedStyle"/> only by skipping the
+    /// initial-value backfill. The result is a fresh, caller-owned map (not cached and not
+    /// shared) — callers that need memoization cache it on their side.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> GetSparseComputedStyle(
+        DomElement element,
+        string? pseudoElement = null)
+    {
+        if (element is null)
+            return EmptyReadOnlyMap;
+
+        ObserveDocument(element);
+        return ComputeStyle(
+            element,
+            NormalizePseudoElement(pseudoElement),
+            [],
+            backfillInitials: false);
+    }
+
+    /// <summary>
     /// Returns the cascade-winning <em>declared</em> values for
     /// <paramref name="element"/> from the registered stylesheets only: the raw
     /// author values after origin/importance/specificity/source-order resolution
@@ -318,7 +354,8 @@ public sealed partial class CssStyleEngine
     private Dictionary<string, string> ComputeStyle(
         DomElement element,
         string? pseudoElement,
-        HashSet<DomElement> ancestorsInProgress)
+        HashSet<DomElement> ancestorsInProgress,
+        bool backfillInitials = true)
     {
         var computed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -372,11 +409,17 @@ public sealed partial class CssStyleEngine
             }
         }
 
-        // 8. Initial values for everything still unset.
-        foreach (var kv in CssInitialValues)
+        // 8. Initial values for everything still unset. Skipped for the sparse
+        // projection (see GetSparseComputedStyle), whose consumers require an
+        // undeclared property to read back as absent (null) rather than as its
+        // initial value — the same non-clobbering contract GetCascadedStyle keeps.
+        if (backfillInitials)
         {
-            if (!computed.ContainsKey(kv.Key))
-                computed[kv.Key] = kv.Value;
+            foreach (var kv in CssInitialValues)
+            {
+                if (!computed.ContainsKey(kv.Key))
+                    computed[kv.Key] = kv.Value;
+            }
         }
 
         ApplyApproximateFormControlComputedSizes(computed, element);
