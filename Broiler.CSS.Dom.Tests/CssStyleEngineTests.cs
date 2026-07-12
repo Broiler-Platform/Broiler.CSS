@@ -1048,4 +1048,108 @@ public sealed class CssStyleEngineTests
         var engine = EngineWith("div { text-align-last: justify; }");
         Assert.Equal("justify", engine.GetComputedStyle(child).GetPropertyValue("text-align-last"));
     }
+
+    // ---- GetSparseComputedStyle: computed pipeline without initial-value backfill ----
+
+    [Fact]
+    public void GetSparseComputedStyle_Omits_Undeclared_NonInherited_Property()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        // No UA sheet is loaded by EngineWith, so `display` has no author or UA rule.
+        var engine = EngineWith("div { color: red; }");
+        var sparse = engine.GetSparseComputedStyle(div);
+
+        // The declared property is present; the undeclared, non-inherited ones stay
+        // ABSENT (read back as null) rather than resolving to their initial value —
+        // the null-for-undeclared contract the anchor/layout consumers depend on.
+        Assert.Equal("red", sparse["color"]);
+        Assert.False(sparse.ContainsKey("display"));
+        Assert.False(sparse.ContainsKey("position"));
+
+        // The one documented exception: ApplyLogicalSizeAliases always materialises the
+        // physical/logical size pair (to "auto" when undeclared), exactly as the bridge's
+        // GetComputedProps does — so the sparse contract deliberately carries width/height
+        // even when undeclared. Parity with the bridge, not a leak of the initial backfill.
+        Assert.Equal("auto", sparse["width"]);
+
+        // GetComputedStyle (full initials) would instead report the initial values,
+        // which is exactly why those consumers cannot use it directly.
+        var full = engine.GetComputedStyle(div);
+        Assert.Equal("inline", full.GetPropertyValue("display"));
+    }
+
+    [Fact]
+    public void GetSparseComputedStyle_Backfills_Inherited_Property_From_Parent()
+    {
+        var (_, _, body) = NewDocument();
+        var parent = body.OwnerDocument.CreateElement("div");
+        parent.ClassName = "p";
+        var child = body.OwnerDocument.CreateElement("span");
+        body.AppendChild(parent);
+        parent.AppendChild(child);
+
+        var engine = EngineWith(".p { color: purple; }");
+
+        // `color` is inherited: the sparse projection backfills it onto the child even
+        // though the child declares nothing. This is the difference from
+        // GetCascadedStyle, which is stylesheet-declared-only (no inheritance backfill).
+        Assert.Equal("purple", engine.GetSparseComputedStyle(child)["color"]);
+        Assert.False(engine.GetCascadedStyle(child).ContainsKey("color"));
+
+        // Still no initial backfill: an undeclared non-inherited property is absent.
+        Assert.False(engine.GetSparseComputedStyle(child).ContainsKey("display"));
+    }
+
+    [Fact]
+    public void GetSparseComputedStyle_Expands_Shorthands_Without_Initial_Longhands()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith("div { margin: 10px 20px; }");
+        var sparse = engine.GetSparseComputedStyle(div);
+
+        // The declared shorthand expands to longhands...
+        Assert.Equal("10px", sparse["margin-top"]);
+        Assert.Equal("20px", sparse["margin-right"]);
+        Assert.Equal("10px", sparse["margin-bottom"]);
+        Assert.Equal("20px", sparse["margin-left"]);
+
+        // ...but an unrelated, undeclared longhand is NOT backfilled to its initial.
+        Assert.False(sparse.ContainsKey("padding-top"));
+        Assert.Equal("0px", engine.GetComputedStyle(div).GetPropertyValue("padding-top"));
+    }
+
+    [Fact]
+    public void GetSparseComputedStyle_Is_A_Subset_Of_GetComputedStyle_Agreeing_On_Shared_Keys()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith("div { color: red; margin: 5px; }");
+        var sparse = engine.GetSparseComputedStyle(div);
+        var full = engine.GetComputedStyle(div);
+
+        // For a plain (non-form-control, no-logical-property) element the sparse map is
+        // exactly the full computed map minus the initial-value backfill: every sparse
+        // key is present in full with an equal value, and full carries strictly more
+        // keys (the undeclared-initials the sparse view deliberately omits).
+        foreach (var kv in sparse)
+            Assert.Equal(kv.Value, full.GetPropertyValue(kv.Key));
+
+        Assert.False(sparse.ContainsKey("display"));
+        Assert.Equal("inline", full.GetPropertyValue("display"));
+    }
+
+    [Fact]
+    public void GetSparseComputedStyle_Returns_Empty_For_Null_Element()
+    {
+        var engine = EngineWith("div { color: red; }");
+        Assert.Empty(engine.GetSparseComputedStyle(null!));
+    }
 }
