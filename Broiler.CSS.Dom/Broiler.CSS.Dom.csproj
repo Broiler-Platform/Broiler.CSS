@@ -10,7 +10,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Broiler.CSS\Broiler.CSS.csproj" />
-    <ProjectReference Include="..\Broiler.DOM\Broiler.Dom\Broiler.Dom.csproj" />
+    <!-- Phase 1 item 4: resolve the canonical Broiler.Dom kernel through $(BroilerDomPath)
+         (nested checkout for standalone builds; single root checkout in the main solution)
+         so the main build does not create a second Broiler.Dom project node. -->
+    <ProjectReference Include="$(BroilerDomPath)" />
   </ItemGroup>
 
 </Project>
