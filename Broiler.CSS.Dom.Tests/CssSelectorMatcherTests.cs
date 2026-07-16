@@ -34,6 +34,46 @@ public sealed class CssSelectorMatcherTests
     }
 
     [Fact]
+    public void Matches_Not_With_Nested_Attribute_Selector()
+    {
+        // Regression: a nested attribute selector inside :not() (or :is()/:where()) must be
+        // evaluated as part of the pseudo, not hoisted to a top-level positive filter.
+        // Previously the attribute strip ran before pseudo extraction, so `p:not([data-state])`
+        // was mis-parsed as "p AND has [data-state]" — inverting it. This inversion is what hid
+        // OPEN <dialog>s under the UA rule `dialog:not([open]){display:none}`.
+        var tree = CreateTree();
+        var matcher = new CssSelectorMatcher();
+
+        // tree.First HAS data-state; tree.Second does not.
+        Assert.False(matcher.Matches(tree.First, "p:not([data-state])"));
+        Assert.True(matcher.Matches(tree.Second, "p:not([data-state])"));
+
+        // The positive attribute-presence direction still works.
+        Assert.True(matcher.Matches(tree.First, "p[data-state]"));
+        Assert.False(matcher.Matches(tree.Second, "p[data-state]"));
+
+        // :is() with a nested attribute selector.
+        Assert.True(matcher.Matches(tree.First, "p:is([data-state], .missing)"));
+        Assert.False(matcher.Matches(tree.Second, "p:is([data-state], .missing)"));
+
+        // Empty-value boolean attribute (the `<dialog open="">` shape): presence matches, and
+        // :not() correctly excludes it.
+        var document = new DomDocument();
+        var root = document.CreateElement("body");
+        document.AppendChild(root);
+        var dialog = document.CreateElement("dialog");
+        dialog.SetAttribute("open", "");
+        root.AppendChild(dialog);
+        Assert.True(matcher.Matches(dialog, "dialog[open]"));
+        Assert.False(matcher.Matches(dialog, "dialog:not([open])"));
+
+        var closed = document.CreateElement("dialog");
+        root.AppendChild(closed);
+        Assert.False(matcher.Matches(closed, "dialog[open]"));
+        Assert.True(matcher.Matches(closed, "dialog:not([open])"));
+    }
+
+    [Fact]
     public void Unknown_PseudoClass_Invalidates_Selector_But_Recognized_Ones_Stay_Lenient()
     {
         var tree = CreateTree();

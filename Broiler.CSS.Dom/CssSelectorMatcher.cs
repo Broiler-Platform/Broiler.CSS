@@ -72,10 +72,23 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             return false;
 
         var compound = StripPseudoElement(source);
+
+        // Process pseudo-classes BEFORE stripping attributes. A functional pseudo's
+        // argument can itself contain an attribute selector (e.g. the `[open]` in
+        // `:not([open])`); ProcessPseudoClasses consumes such pseudos whole (ExtractPseudos
+        // is bracket-aware and the recursive matcher evaluates the nested `[open]`) and
+        // removes them from the compound. Stripping attributes first would instead hoist the
+        // nested `[open]` into a top-level *positive* filter and leave an empty `:not()`,
+        // inverting `:not([attr])` so it matched elements that HAVE the attribute — which,
+        // for the UA `dialog:not([open]){display:none}` rule, hid OPEN dialogs.
+        if (!ProcessPseudoClasses(element, ref compound, scope))
+            return false;
+
         var attributes = new List<AttributeFilter>();
         // The attribute regex only ever matches when a '[' is present; skip the
         // Replace (which otherwise scans the whole compound per element) for the
-        // common attribute-free selector.
+        // common attribute-free selector. Runs on the now pseudo-free compound, so only
+        // top-level `[...]` remain.
         if (compound.IndexOf('[') >= 0)
         {
             compound = AttributePattern.Replace(compound, match =>
@@ -89,9 +102,6 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 return string.Empty;
             });
         }
-
-        if (!ProcessPseudoClasses(element, ref compound, scope))
-            return false;
 
         string? type = null;
         string? id = null;
