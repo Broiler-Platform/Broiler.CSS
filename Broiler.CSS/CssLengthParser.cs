@@ -36,6 +36,33 @@ public static class CssLengthParser
     private static double _vmaxFactor;
 
     /// <summary>
+    /// Element <c>zoom</c> factor applied to <em>absolute</em> used lengths
+    /// (<c>px</c>/<c>mm</c>/<c>cm</c>/<c>in</c>/<c>pt</c>/<c>pc</c>/<c>q</c>/<c>rem</c>/<c>rlh</c>)
+    /// during evaluation — including the sub-terms of a <c>calc()</c>/<c>min()</c>/<c>max()</c>
+    /// expression, which is why the scaling lives here rather than as a post-multiply at the call
+    /// site. Font-relative units (<c>em</c>/<c>ex</c>/<c>ch</c>/<c>ic</c>/<c>lh</c>) are deliberately
+    /// excluded: they already ride the caller's zoomed <c>emFactor</c>/<c>lineHeightFactor</c>.
+    /// Viewport units are excluded too (element zoom does not scale the viewport). <c>0</c> (the
+    /// thread-static default) is treated as the neutral <c>1.0</c>, so a caller that never opts in
+    /// is byte-identical to the pre-zoom parser.
+    /// </summary>
+    [ThreadStatic]
+    private static double _absoluteZoom;
+
+    /// <summary>
+    /// Element <c>zoom</c> factor applied to <em>percentage</em> terms. Percentages resolve against
+    /// their (already resolved) <c>hundredPercent</c> basis; when that basis is the ancestor-zoomed
+    /// containing block the caller passes its own zoom here to reach the effective factor, and when
+    /// the basis is the box's own already-scaled size it passes <c>1.0</c>. <c>0</c> is treated as
+    /// the neutral <c>1.0</c>.
+    /// </summary>
+    [ThreadStatic]
+    private static double _percentZoom;
+
+    private static double AbsoluteZoom => _absoluteZoom > 0 ? _absoluteZoom : 1.0;
+    private static double PercentZoom => _percentZoom > 0 ? _percentZoom : 1.0;
+
+    /// <summary>
     /// Sets the viewport dimensions used by <see cref="ParseLength"/> to
     /// resolve CSS viewport-relative units.
     /// </summary>
@@ -46,6 +73,35 @@ public static class CssLengthParser
         _vminFactor = Math.Min(width, height) * 0.01;
         _vmaxFactor = Math.Max(width, height) * 0.01;
     }
+
+    /// <summary>
+    /// Sets the element <c>zoom</c> factors used while resolving lengths, so a <c>calc()</c> whose
+    /// sub-terms mix absolute, percentage and font-/viewport-relative units scales each term
+    /// correctly (the hardcoded absolute unit→pixel factors are the only lever that cannot be reached
+    /// from outside the parser). Callers set the factors around a parse and reset them to
+    /// <c>1.0, 1.0</c> afterwards. Both default to the neutral <c>1.0</c>, so the parser is unchanged
+    /// unless a caller opts in. See <see cref="_absoluteZoom"/>/<see cref="_percentZoom"/> for the
+    /// unit split.
+    /// </summary>
+    public static void SetElementZoom(double absoluteZoom, double percentZoom)
+    {
+        _absoluteZoom = absoluteZoom;
+        _percentZoom = percentZoom;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="unit"/> is an absolute used-length unit that element <c>zoom</c>
+    /// scales. Mirrors the engine's non-<c>calc()</c> zoom classification: absolute physical units
+    /// plus root-relative <c>rem</c>/<c>rlh</c>; excludes <c>em</c>/<c>ex</c>/<c>ch</c>/<c>ic</c>/<c>lh</c>
+    /// (ride the zoomed font metrics) and the viewport units (unaffected by element zoom).
+    /// </summary>
+    private static bool IsElementZoomAbsoluteUnit(string unit) => unit switch
+    {
+        CssConstants.Px or CssConstants.Mm or CssConstants.Cm or CssConstants.In or
+        CssConstants.Pt or CssConstants.Pc or CssConstants.Q or
+        CssConstants.Rem or CssConstants.Rlh => true,
+        _ => false,
+    };
 
     public static bool IsValidLength(string value)
     {
@@ -412,7 +468,7 @@ public static class CssLengthParser
 
         if (value.EndsWith('%'))
         {
-            evaluation = new LengthEvaluation(ParseNumber(value, hundredPercent), IsUnitless: false);
+            evaluation = new LengthEvaluation(ParseNumber(value, hundredPercent) * PercentZoom, IsUnitless: false);
             return true;
         }
 
@@ -444,9 +500,12 @@ public static class CssLengthParser
         if (double.IsNaN(factor))
             return false;
 
-        evaluation = new LengthEvaluation(unit == CssConstants.Pt && returnPoints
-                ? ParseNumber(number, hundredPercent) 
-                : factor * parsedNumber, IsUnitless: false);
+        double pixels = unit == CssConstants.Pt && returnPoints
+            ? ParseNumber(number, hundredPercent)
+            : factor * parsedNumber;
+        if (IsElementZoomAbsoluteUnit(unit))
+            pixels *= AbsoluteZoom;
+        evaluation = new LengthEvaluation(pixels, IsUnitless: false);
         return true;
     }
 
