@@ -723,10 +723,14 @@ public static class CssLengthParser
         if (string.IsNullOrEmpty(borderValue))
             return GetActualBorderWidth(CssConstants.Medium, emHeight);
 
+        // CSS spec / browser used values for the border-width keywords: thin=1px,
+        // medium=3px, thick=5px. This is the single source of truth for the keyword
+        // widths across the layout engine, the HtmlBridge anchor resolver, and the
+        // native anchor path (which previously carried their own drifted copies).
         return borderValue switch
         {
             CssConstants.Thin => (double)1f,
-            CssConstants.Medium => (double)2f,
+            CssConstants.Medium => (double)3f,
             CssConstants.Thick => (double)5f,
             _ => Math.Abs(ParseLength(borderValue, 1, emHeight)),
         };
