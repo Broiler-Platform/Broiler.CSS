@@ -586,6 +586,58 @@ public static class CssLengthParser
     }
 
     /// <summary>
+    /// Font-free approximation of a single CSS length value to pixels, used where no live
+    /// font/box metrics are available: <c>em</c>/<c>rem</c>/<c>ic</c> = 16px, <c>ex</c>/<c>ch</c> = 8px,
+    /// <c>lh</c>/<c>rlh</c> = 19.2px, and <c>vw</c>/<c>vh</c>/<c>vmin</c>/<c>vmax</c> resolved against the
+    /// supplied viewport (0 = unavailable → those units yield <see cref="double.NaN"/>). A bare number
+    /// is treated as pixels. Returns <see cref="double.NaN"/> when the value cannot be parsed. Distinct
+    /// from <see cref="ParseLength(string, double, double, bool)"/>, which resolves against caller-supplied
+    /// font/percentage bases.
+    /// </summary>
+    public static double ParseToPixels(string value, int viewportWidth = 0, int viewportHeight = 0)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return double.NaN;
+
+        var v = NormalizeSingleValueLengthFunction(value).Trim().ToLowerInvariant();
+        if (viewportHeight > 0 && v.EndsWith("vh"))
+            return TryParseLeadingNumber(v, 2, out var vh) ? (vh / 100.0) * viewportHeight : double.NaN;
+        if (viewportWidth > 0 && v.EndsWith("vw"))
+            return TryParseLeadingNumber(v, 2, out var vw) ? (vw / 100.0) * viewportWidth : double.NaN;
+
+        var viewportMin = Math.Min(viewportWidth, viewportHeight);
+        if (viewportMin > 0 && v.EndsWith("vmin"))
+            return TryParseLeadingNumber(v, 4, out var vmin) ? (vmin / 100.0) * viewportMin : double.NaN;
+
+        var viewportMax = Math.Max(viewportWidth, viewportHeight);
+        if (viewportMax > 0 && v.EndsWith("vmax"))
+            return TryParseLeadingNumber(v, 4, out var vmax) ? (vmax / 100.0) * viewportMax : double.NaN;
+
+        if (v.EndsWith("px"))
+            return TryParseLeadingNumber(v, 2, out var px) ? px : double.NaN;
+        if (v.EndsWith("rem"))
+            return TryParseLeadingNumber(v, 3, out var rem) ? rem * 16.0 : double.NaN;
+        if (v.EndsWith("em"))
+            return TryParseLeadingNumber(v, 2, out var em) ? em * 16.0 : double.NaN;
+        if (v.EndsWith("ex"))
+            return TryParseLeadingNumber(v, 2, out var ex) ? ex * 8.0 : double.NaN;
+        if (v.EndsWith("ch"))
+            return TryParseLeadingNumber(v, 2, out var ch) ? ch * 8.0 : double.NaN;
+        if (v.EndsWith("ic"))
+            return TryParseLeadingNumber(v, 2, out var ic) ? ic * 16.0 : double.NaN;
+        if (v.EndsWith("rlh"))
+            return TryParseLeadingNumber(v, 3, out var rlh) ? rlh * 19.2 : double.NaN;
+        if (v.EndsWith("lh"))
+            return TryParseLeadingNumber(v, 2, out var lh) ? lh * 19.2 : double.NaN;
+
+        if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var raw))
+            return raw;
+        return double.NaN;
+    }
+
+    private static bool TryParseLeadingNumber(string value, int suffixLength, out double result) =>
+        double.TryParse(value[..^suffixLength], NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+
+    /// <summary>
     /// Unwraps a length value that is a single-argument <c>calc()</c>/<c>min()</c>/<c>max()</c>
     /// function (or redundant parentheses) down to its inner length token — e.g.
     /// <c>calc(10px)</c> → <c>10px</c>, <c>((2em))</c> → <c>2em</c>. A function containing a
