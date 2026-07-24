@@ -399,6 +399,18 @@ public sealed partial class CssStyleEngine
         if (ContainsSubstitutionFunction(v))
             return true;
 
+        // CSS Values 4 §10 (calc-type-checking): inside a min()/max()/clamp() used
+        // in a <length-percentage> context every argument must itself resolve to a
+        // <length-percentage>. A bare <number> — including a unitless 0, which is
+        // *not* the dimensionless 0 length that is allowed outside a math function —
+        // is a type mismatch, so the whole function (and its declaration) is
+        // invalid and must be dropped, letting a previously-cascaded valid value
+        // win (WPT css-values/max-unitless-zero-invalid: `height: min(0, 100%)`
+        // yields to the earlier `height: min(100%)`). calc() is intentionally not
+        // checked: a <number> is a valid operand there (e.g. `calc(100% / 3)`).
+        if (IsLengthPercentageProperty(property) && ComparisonMathFunctionHasBareNumberArgument(v))
+            return false;
+
         switch (property.ToLowerInvariant())
         {
             case "white-space":
@@ -1563,6 +1575,141 @@ public sealed partial class CssStyleEngine
             return double.TryParse(v[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out _);
         return !double.IsNaN(ParseCssLengthToPixels(v));
     }
+
+    // Properties whose grammar takes a <length-percentage> (optionally alongside
+    // keywords such as auto/none), where a min()/max()/clamp() argument may never
+    // be a bare <number>. Kept deliberately conservative — the core sizing, inset,
+    // margin, padding, gap and text-indent/flex-basis families — so the
+    // calc-type-checking rejection in IsAcceptableDeclarationValue can only drop a
+    // value that is genuinely invalid, never one the renderer would have honoured.
+    private static readonly HashSet<string> LengthPercentageProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "width", "height",
+        "min-width", "min-height", "max-width", "max-height",
+        "inline-size", "block-size",
+        "min-inline-size", "min-block-size", "max-inline-size", "max-block-size",
+        "top", "right", "bottom", "left",
+        "inset", "inset-block", "inset-inline",
+        "inset-block-start", "inset-block-end", "inset-inline-start", "inset-inline-end",
+        "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+        "margin-block", "margin-inline",
+        "margin-block-start", "margin-block-end", "margin-inline-start", "margin-inline-end",
+        "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+        "padding-block", "padding-inline",
+        "padding-block-start", "padding-block-end", "padding-inline-start", "padding-inline-end",
+        "text-indent", "flex-basis",
+        "gap", "row-gap", "column-gap",
+        "grid-gap", "grid-row-gap", "grid-column-gap",
+    };
+
+    private static bool IsLengthPercentageProperty(string property) =>
+        LengthPercentageProperties.Contains(property);
+
+    private static readonly string[] ComparisonMathFunctionNames = { "min", "max", "clamp" };
+
+    // True when the value contains a min()/max()/clamp() call that takes a bare
+    // <number> (e.g. `min(0, 100%)`) as one of its top-level arguments. Every
+    // occurrence is scanned, so a nested `min(0, …)` inside an outer function is
+    // caught as well. calc() is not scanned — a <number> is a legal operand there.
+    private static bool ComparisonMathFunctionHasBareNumberArgument(string value)
+    {
+        foreach (var name in ComparisonMathFunctionNames)
+        {
+            var searchFrom = 0;
+            while (true)
+            {
+                var open = IndexOfFunctionCall(value, name, searchFrom);
+                if (open < 0)
+                    break;
+
+                var openParen = open + name.Length;
+                var closeParen = MatchingParenthesis(value, openParen);
+                if (closeParen < 0)
+                    break;
+
+                var content = value.Substring(openParen + 1, closeParen - openParen - 1);
+                foreach (var arg in SplitTopLevelCommaArguments(content))
+                {
+                    if (IsBareNumberTerm(arg))
+                        return true;
+                }
+
+                searchFrom = openParen + 1;
+            }
+        }
+
+        return false;
+    }
+
+    // Index of a `name(` function call in <paramref name="value"/> at or after
+    // <paramref name="from"/>, requiring the character before the name not to be a
+    // CSS identifier char so `max` is not matched inside `minmax(`.
+    private static int IndexOfFunctionCall(string value, string name, int from)
+    {
+        var needle = name + "(";
+        var i = from;
+        while ((i = value.IndexOf(needle, i, StringComparison.Ordinal)) >= 0)
+        {
+            if (i == 0 || !IsCssIdentifierChar(value[i - 1]))
+                return i;
+            i += needle.Length;
+        }
+
+        return -1;
+    }
+
+    // Index of the ')' matching the '(' at <paramref name="openIndex"/>, or -1.
+    private static int MatchingParenthesis(string value, int openIndex)
+    {
+        var depth = 0;
+        for (var i = openIndex; i < value.Length; i++)
+        {
+            if (value[i] == '(')
+                depth++;
+            else if (value[i] == ')' && --depth == 0)
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static List<string> SplitTopLevelCommaArguments(string content)
+    {
+        var args = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < content.Length; i++)
+        {
+            var c = content[i];
+            if (c == '(')
+                depth++;
+            else if (c == ')')
+                depth--;
+            else if (c == ',' && depth == 0)
+            {
+                args.Add(content[start..i]);
+                start = i + 1;
+            }
+        }
+
+        args.Add(content[start..]);
+        return args;
+    }
+
+    // A bare <number>: a finite numeric literal with no unit and no '%'. A parsed
+    // special value (nan/infinity — valid calc() constants) is deliberately not
+    // treated as a bare number.
+    private static bool IsBareNumberTerm(string arg)
+    {
+        arg = arg.Trim();
+        return arg.Length > 0
+            && double.TryParse(arg, NumberStyles.Float, CultureInfo.InvariantCulture, out var n)
+            && !double.IsNaN(n)
+            && !double.IsInfinity(n);
+    }
+
+    private static bool IsCssIdentifierChar(char c) =>
+        char.IsLetterOrDigit(c) || c == '-' || c == '_';
 
     private static double ParseCssLengthToPixels(string value, int viewportWidth = 0, int viewportHeight = 0)
     {

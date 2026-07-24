@@ -37,6 +37,23 @@ public sealed class CssDeclarationValidatorTests
     // Unknown vendor-prefixed color values are rejected; standard prefixes pass.
     [InlineData("color", "-acid3-bogus", false)]
     [InlineData("color", "-webkit-link", true)]
+    // CSS Values 4 calc-type-checking: a bare <number> (unitless, incl. 0) is a
+    // type error as a top-level min()/max()/clamp() argument in a length context,
+    // so the declaration is dropped (WPT css-values/max-unitless-zero-invalid).
+    [InlineData("height", "min(0, 100%)", false)]
+    [InlineData("height", "min(100%)", true)]
+    [InlineData("width", "max(0, 100px)", false)]
+    [InlineData("height", "clamp(0, 50%, 100%)", false)]
+    [InlineData("margin-left", "min(1, 10px)", false)]
+    [InlineData("top", "max(50%, min(0, 10px))", false)]   // caught in the nested min()
+    // Valid math is untouched: 0px is a length, calc() may carry a <number>, and a
+    // number outside the length-property set (opacity/line-height) is not policed.
+    [InlineData("height", "min(0px, 100%)", true)]
+    [InlineData("width", "max(calc(100% / 3), 50px)", true)]
+    [InlineData("height", "clamp(10px, 50%, 100px)", true)]
+    [InlineData("width", "min(50%, var(--x))", true)]      // substitution deferred
+    [InlineData("opacity", "clamp(0, 0.5, 1)", true)]      // <number> property, allowed
+    [InlineData("line-height", "min(1.5, 2)", true)]       // <number> property, allowed
     public void IsAcceptableDeclarationValue_Matches_The_Cascade_Table(
         string property, string value, bool expected)
     {
