@@ -141,7 +141,7 @@ public static class CssConstants
     public const string Q = "q";
     /// <summary>
     /// Initial (root) font size in points. Single-sourced from
-    /// <see cref="CssMetrics.DefaultFontSizePt"/> (measurement-dedup roadmap M5).
+    /// <see cref="CssMetrics.DefaultFontSizePt"/>.
     /// </summary>
     public const double FontSize = CssMetrics.DefaultFontSizePt;
     public const string DefaultFont = "serif";

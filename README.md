@@ -12,9 +12,9 @@ It contains:
 ## Preview status
 
 This is first-preview software. Its API and behavior may change without compatibility
-guarantees. Substantial implementation work was AI-assisted. The component is **not
-human-approved for preview use** while [HUMAN_REVIEW.md](HUMAN_REVIEW.md) remains
-`PENDING`.
+guarantees. Substantial implementation work was AI-assisted. Human-review approval is
+revision-scoped; consult [HUMAN_REVIEW.md](HUMAN_REVIEW.md) for the reviewed revision
+and conditions before describing the current checkout as approved.
 
 Broiler.CSS is an independent Broiler component. It is used by Broiler.HTML, whose
 rendering lineage comes from HTML Renderer, but it must not be represented as an official
@@ -29,6 +29,11 @@ git submodule update --init --recursive
 dotnet build Broiler.CSS.slnx
 dotnet test Broiler.CSS.slnx
 ```
+
+## Documentation
+
+- [Current roadmap](docs/roadmap.md) — the small amount of work still open
+- [Human-review record](HUMAN_REVIEW.md) — revision-scoped preview decision
 
 ## License
 

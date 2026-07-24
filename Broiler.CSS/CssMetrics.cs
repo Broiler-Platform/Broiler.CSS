@@ -5,8 +5,7 @@ namespace Broiler.CSS;
 /// used-value resolution and layout. Consolidates the "96 DPI" assumption and the
 /// per-unit pixel conversions that were previously scattered as inline literals
 /// across <c>CssLengthParser</c>, <c>CssBoxProperties</c>, <c>CssLayoutEngine</c>,
-/// and <c>CssStyleEngine</c> (see
-/// <c>docs/roadmap/broiler-layout-measurement-dedup.md</c>, Phase M0).
+/// and <c>CssStyleEngine</c>.
 ///
 /// <para>
 /// The absolute-unit factors are <b>derived</b> from <see cref="Dpi"/> rather than
@@ -15,7 +14,7 @@ namespace Broiler.CSS;
 /// are mathematically exact to full <c>double</c> precision and differ from those
 /// literals by ~1e-10 relative — a precision improvement that is far below
 /// sub-pixel significance (orders of magnitude under the WPT ≤1%-differing-pixel
-/// gate). This is a pure addition in M0: no code references these yet.
+/// gate).
 /// </para>
 /// </summary>
 public static class CssMetrics
@@ -58,8 +57,8 @@ public static class CssMetrics
 
     /// <summary>
     /// Initial (root) font size in points — the single source that
-    /// <see cref="CssConstants.FontSize"/> forwards to (measurement-dedup roadmap
-    /// M5). Equivalent to the browser default of 16px (12pt · 96/72); the renderer's
+    /// <see cref="CssConstants.FontSize"/> forwards to. Equivalent to the browser
+    /// default of 16px (12pt · 96/72); the renderer's
     /// obsolete <c>CssBoxModel</c> 16px literal is dead code, so no 12-vs-16 conflict.
     /// </summary>
     public const double DefaultFontSizePt = 12.0;

@@ -1,10 +1,9 @@
 namespace Broiler.CSS.Tests;
 
 /// <summary>
-/// Phase M0 guard for <see cref="CssMetrics"/>: pins the derived measurement
-/// factors to (a) their mathematical definitions and (b) the historical inline
-/// literals they will replace in Phase M1, so the later swap is provably
-/// behavior-neutral. See <c>docs/roadmap/broiler-layout-measurement-dedup.md</c>.
+/// Guard for <see cref="CssMetrics"/>: pins the derived measurement factors to
+/// their mathematical definitions and to the historical inline literals they
+/// replaced, preserving behavior while retaining the more precise values.
 /// </summary>
 public sealed class CssMetricsTests
 {

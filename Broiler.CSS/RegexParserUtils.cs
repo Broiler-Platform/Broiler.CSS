@@ -3,11 +3,8 @@ using System.Text.RegularExpressions;
 namespace Broiler.CSS;
 
 /// <summary>
-/// Compiled CSS grammar regexes and small parsing helpers, promoted into the
-/// <c>Broiler.CSS</c> kernel for the layout extraction (see
-/// <c>docs/roadmap/broiler-layout-component.md</c> §3, Phase 3.5). Ported verbatim
-/// from the renderer's <c>Broiler.HTML.CSS.Core.Parse.RegexParserUtils</c>; the
-/// renderer keeps its own copy until the Phase 7 CSS cleanup dedups.
+/// Shared compiled CSS grammar regexes and small parsing helpers used by the
+/// CSS and layout components.
 /// </summary>
 public static partial class RegexParserUtils
 {

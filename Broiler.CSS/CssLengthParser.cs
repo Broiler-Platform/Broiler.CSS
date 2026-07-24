@@ -5,13 +5,9 @@ using System.Globalization;
 namespace Broiler.CSS;
 
 /// <summary>
-/// Static CSS length / number resolution promoted into the <c>Broiler.CSS</c>
-/// kernel for the layout extraction (see <c>docs/roadmap/broiler-layout-component.md</c>
-/// §3, Phase 3.2). Ported verbatim from the renderer's
-/// <c>Broiler.HTML.CSS.CssValueParser</c> static length surface — the only part
-/// the layout engine consumes (<c>ParseLength</c>, <c>ParseNumber</c>,
-/// <c>IsValidLength</c>, <c>GetActualBorderWidth</c>). The renderer keeps its own
-/// copy (which also carries colour parsing) until the Phase 7 CSS cleanup dedups.
+/// Shared static CSS length and number resolution used by the layout engine
+/// (<c>ParseLength</c>, <c>ParseNumber</c>, <c>IsValidLength</c>, and
+/// <c>GetActualBorderWidth</c>).
 /// Viewport-relative units depend on <see cref="SetViewportSize"/> being called
 /// per layout pass, mirroring the renderer.
 /// </summary>
@@ -646,8 +642,8 @@ public static class CssLengthParser
 
     /// <summary>
     /// Scans a length token for its trailing CSS unit (the single source of the
-    /// substring/unit-matching logic; also consumed by <see cref="CssLength"/> —
-    /// see the measurement-dedup roadmap, Phase M3). Returns the canonical unit
+    /// substring/unit-matching logic, also consumed by <see cref="CssLength"/>).
+    /// Returns the canonical unit
     /// string and sets <paramref name="hasUnit"/>; falls back to
     /// <paramref name="defaultUnit"/> when no unit is present.
     /// </summary>

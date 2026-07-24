@@ -5,13 +5,9 @@ namespace Broiler.CSS;
 
 /// <summary>
 /// Parses a single CSS length token (e.g. <c>"12px"</c>, <c>"1.5em"</c>,
-/// <c>"50%"</c>) into its numeric value and unit. Promoted into the
-/// <c>Broiler.CSS</c> kernel for the layout extraction (see
-/// <c>docs/roadmap/broiler-layout-component.md</c> §3, Phase 3.3); ported from the
-/// renderer's <c>Broiler.HTML.CSS.CssLength</c>, with the unit enum remapped onto
-/// <see cref="CssUnit"/> (<c>Px</c>/<c>Em</c>/… in place of the renderer's
-/// <c>Pixels</c>/<c>Ems</c>/…). The renderer keeps its own copy until the Phase 7
-/// CSS cleanup dedups.
+/// <c>"50%"</c>) into its numeric value and unit. This is the shared
+/// <c>Broiler.CSS</c> representation used by layout, with units projected onto
+/// <see cref="CssUnit"/>.
 /// </summary>
 public sealed class CssLength
 {
@@ -44,9 +40,8 @@ public sealed class CssLength
             return;
         }
 
-        // Detect the trailing unit via the shared CssLengthParser scanner (single
-        // source of the substring/unit-matching logic — measurement-dedup roadmap
-        // Phase M3), then project the token onto CssUnit. Units the legacy
+        // Detect the trailing unit via the shared CssLengthParser scanner, then
+        // project the token onto CssUnit. Units the legacy
         // CssLength never recognized (lh/rlh/Q) map to an error, preserving behavior.
         string unit = CssLengthParser.GetUnit(length, null, out bool hasUnit);
         if (!hasUnit || !TryMapUnit(unit, out CssUnit cssUnit, out bool isRelative))

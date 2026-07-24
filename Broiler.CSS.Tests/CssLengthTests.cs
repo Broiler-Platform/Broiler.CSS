@@ -1,9 +1,9 @@
 namespace Broiler.CSS.Tests;
 
 /// <summary>
-/// Behavior-parity guard for <see cref="CssLength"/> after Phase M3 of the
-/// measurement-dedup roadmap routed its unit detection through the shared
-/// <c>CssLengthParser.GetUnit</c> scanner. Pins the exact pre-refactor contract:
+/// Behavior-parity guard for <see cref="CssLength"/> after its unit detection
+/// was routed through the shared <c>CssLengthParser.GetUnit</c> scanner. Pins
+/// the exact pre-refactor contract:
 /// the recognized unit set (deliberately NARROWER than the parser — no lh/rlh/Q),
 /// the CssUnit projection, the relative-unit flag, and the error semantics.
 /// </summary>

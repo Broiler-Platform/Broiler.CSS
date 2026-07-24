@@ -9,8 +9,7 @@
     This file is the single source of truth. It is VENDORED into each
     component at <Component>/eng/Broiler.Packaging.props by
     scripts/sync-packaging.ps1, so every component builds and packs
-    standalone with no dependency on a parent-repo file (see
-    docs/roadmap/nuget-packaging-phase0-decisions.md, decision D0).
+    standalone with no dependency on a parent-repo file.
 
     DO NOT edit the vendored copies by hand. Edit this canonical file
     and re-run the sync script.
