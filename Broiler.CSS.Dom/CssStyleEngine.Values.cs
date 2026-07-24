@@ -992,28 +992,7 @@ public sealed partial class CssStyleEngine
         var parts = SplitCssValues(value);
         if (parts.Length == 0) return;
 
-        string top, right, bottom, left;
-        switch (parts.Length)
-        {
-            case 1:
-                top = right = bottom = left = parts[0];
-                break;
-            case 2:
-                top = bottom = parts[0];
-                right = left = parts[1];
-                break;
-            case 3:
-                top = parts[0];
-                right = left = parts[1];
-                bottom = parts[2];
-                break;
-            default:
-                top = parts[0];
-                right = parts[1];
-                bottom = parts[2];
-                left = parts[3];
-                break;
-        }
+        var (top, right, bottom, left) = CssBoxShorthand.SelectTrbl(parts);
 
         if (!computed.ContainsKey(topProp)) computed[topProp] = top;
         if (!computed.ContainsKey(rightProp)) computed[rightProp] = right;
