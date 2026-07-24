@@ -574,7 +574,14 @@ public static class CssLengthParser
         return parts;
     }
 
-    private static string NormalizeSingleValueLengthFunction(string value)
+    /// <summary>
+    /// Unwraps a length value that is a single-argument <c>calc()</c>/<c>min()</c>/<c>max()</c>
+    /// function (or redundant parentheses) down to its inner length token — e.g.
+    /// <c>calc(10px)</c> → <c>10px</c>, <c>((2em))</c> → <c>2em</c>. A function containing a
+    /// top-level comma (a genuine multi-argument <c>min()</c>/<c>max()</c>) or an operator is
+    /// left untouched. Canonical CSS-syntax utility shared with the HtmlBridge length parser.
+    /// </summary>
+    public static string NormalizeSingleValueLengthFunction(string value)
     {
         var current = value.Trim();
         while (TryUnwrapSingleValueFunction(current, "calc", out var inner) ||
@@ -620,7 +627,13 @@ public static class CssLengthParser
         return true;
     }
 
-    private static bool HasBalancedParens(string value)
+    /// <summary>
+    /// Whether every <c>(</c> in <paramref name="value"/> has a matching <c>)</c> and no
+    /// <c>)</c> appears before its opener — i.e. the parentheses nest correctly. Canonical
+    /// CSS-syntax utility shared with the HtmlBridge length parser (used to validate the
+    /// body of a <c>calc()</c>/<c>min()</c>/<c>max()</c> before evaluating it).
+    /// </summary>
+    public static bool HasBalancedParens(string value)
     {
         var depth = 0;
         foreach (var ch in value)
