@@ -157,7 +157,7 @@ public static class CssomRuleMetadata
     }
 
     /// <summary>Extracts a namespace URI from a quoted string or <c>url(...)</c> token.</summary>
-    private static string ExtractNamespaceUri(string uriPart)
+    public static string ExtractNamespaceUri(string uriPart)
     {
         uriPart = uriPart.Trim();
 
