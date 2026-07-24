@@ -505,7 +505,13 @@ public static class CssLengthParser
         return true;
     }
 
-    private static int FindTopLevelAdditiveOperator(string expression)
+    /// <summary>
+    /// Index of the last top-level <c>+</c>/<c>-</c> operator in a <c>calc()</c>-style
+    /// expression (scanning right-to-left, ignoring operators inside parentheses and
+    /// those that are actually a sign on the following term), or <c>-1</c> if none.
+    /// Canonical CSS-syntax utility shared with the HtmlBridge length parser.
+    /// </summary>
+    public static int FindTopLevelAdditiveOperator(string expression)
     {
         var depth = 0;
         for (int i = expression.Length - 1; i >= 1; i--)
@@ -547,7 +553,12 @@ public static class CssLengthParser
         return -1;
     }
 
-    private static List<string> SplitTopLevelArguments(string value)
+    /// <summary>
+    /// Splits a comma-separated argument list (e.g. a <c>min()</c>/<c>max()</c> body) on its
+    /// top-level commas, keeping nested <c>fn(...)</c> groups intact and trimming each argument.
+    /// Canonical CSS-syntax utility shared with the HtmlBridge length parser.
+    /// </summary>
+    public static List<string> SplitTopLevelArguments(string value)
     {
         var parts = new List<string>();
         var depth = 0;
