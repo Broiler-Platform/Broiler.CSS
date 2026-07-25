@@ -846,7 +846,13 @@ public sealed partial class CssStyleEngine
         or "text-decoration"
         or "text-transform";
 
-    private static string? NormalizePseudoElement(string? pseudoElement)
+    /// <summary>
+    /// Canonicalizes a pseudo-element selector to its <c>::</c>-prefixed form
+    /// (e.g. <c>:before</c> → <c>::before</c>) for the recognized rendered
+    /// pseudo-elements, or <c>null</c> for empty/unrecognized input. The single
+    /// source of truth shared with the HtmlBridge computed-style host.
+    /// </summary>
+    public static string? NormalizePseudoElement(string? pseudoElement)
     {
         if (string.IsNullOrWhiteSpace(pseudoElement))
             return null;

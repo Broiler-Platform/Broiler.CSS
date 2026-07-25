@@ -505,7 +505,13 @@ public static class CssLengthParser
         return true;
     }
 
-    private static int FindTopLevelAdditiveOperator(string expression)
+    /// <summary>
+    /// Index of the last top-level <c>+</c>/<c>-</c> operator in a <c>calc()</c>-style
+    /// expression (scanning right-to-left, ignoring operators inside parentheses and
+    /// those that are actually a sign on the following term), or <c>-1</c> if none.
+    /// Canonical CSS-syntax utility shared with the HtmlBridge length parser.
+    /// </summary>
+    public static int FindTopLevelAdditiveOperator(string expression)
     {
         var depth = 0;
         for (int i = expression.Length - 1; i >= 1; i--)
@@ -547,7 +553,12 @@ public static class CssLengthParser
         return -1;
     }
 
-    private static List<string> SplitTopLevelArguments(string value)
+    /// <summary>
+    /// Splits a comma-separated argument list (e.g. a <c>min()</c>/<c>max()</c> body) on its
+    /// top-level commas, keeping nested <c>fn(...)</c> groups intact and trimming each argument.
+    /// Canonical CSS-syntax utility shared with the HtmlBridge length parser.
+    /// </summary>
+    public static List<string> SplitTopLevelArguments(string value)
     {
         var parts = new List<string>();
         var depth = 0;
@@ -574,7 +585,66 @@ public static class CssLengthParser
         return parts;
     }
 
-    private static string NormalizeSingleValueLengthFunction(string value)
+    /// <summary>
+    /// Font-free approximation of a single CSS length value to pixels, used where no live
+    /// font/box metrics are available: <c>em</c>/<c>rem</c>/<c>ic</c> = 16px, <c>ex</c>/<c>ch</c> = 8px,
+    /// <c>lh</c>/<c>rlh</c> = 19.2px, and <c>vw</c>/<c>vh</c>/<c>vmin</c>/<c>vmax</c> resolved against the
+    /// supplied viewport (0 = unavailable → those units yield <see cref="double.NaN"/>). A bare number
+    /// is treated as pixels. Returns <see cref="double.NaN"/> when the value cannot be parsed. Distinct
+    /// from <see cref="ParseLength(string, double, double, bool)"/>, which resolves against caller-supplied
+    /// font/percentage bases.
+    /// </summary>
+    public static double ParseToPixels(string value, int viewportWidth = 0, int viewportHeight = 0)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return double.NaN;
+
+        var v = NormalizeSingleValueLengthFunction(value).Trim().ToLowerInvariant();
+        if (viewportHeight > 0 && v.EndsWith("vh"))
+            return TryParseLeadingNumber(v, 2, out var vh) ? (vh / 100.0) * viewportHeight : double.NaN;
+        if (viewportWidth > 0 && v.EndsWith("vw"))
+            return TryParseLeadingNumber(v, 2, out var vw) ? (vw / 100.0) * viewportWidth : double.NaN;
+
+        var viewportMin = Math.Min(viewportWidth, viewportHeight);
+        if (viewportMin > 0 && v.EndsWith("vmin"))
+            return TryParseLeadingNumber(v, 4, out var vmin) ? (vmin / 100.0) * viewportMin : double.NaN;
+
+        var viewportMax = Math.Max(viewportWidth, viewportHeight);
+        if (viewportMax > 0 && v.EndsWith("vmax"))
+            return TryParseLeadingNumber(v, 4, out var vmax) ? (vmax / 100.0) * viewportMax : double.NaN;
+
+        if (v.EndsWith("px"))
+            return TryParseLeadingNumber(v, 2, out var px) ? px : double.NaN;
+        if (v.EndsWith("rem"))
+            return TryParseLeadingNumber(v, 3, out var rem) ? rem * 16.0 : double.NaN;
+        if (v.EndsWith("em"))
+            return TryParseLeadingNumber(v, 2, out var em) ? em * 16.0 : double.NaN;
+        if (v.EndsWith("ex"))
+            return TryParseLeadingNumber(v, 2, out var ex) ? ex * 8.0 : double.NaN;
+        if (v.EndsWith("ch"))
+            return TryParseLeadingNumber(v, 2, out var ch) ? ch * 8.0 : double.NaN;
+        if (v.EndsWith("ic"))
+            return TryParseLeadingNumber(v, 2, out var ic) ? ic * 16.0 : double.NaN;
+        if (v.EndsWith("rlh"))
+            return TryParseLeadingNumber(v, 3, out var rlh) ? rlh * 19.2 : double.NaN;
+        if (v.EndsWith("lh"))
+            return TryParseLeadingNumber(v, 2, out var lh) ? lh * 19.2 : double.NaN;
+
+        if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var raw))
+            return raw;
+        return double.NaN;
+    }
+
+    private static bool TryParseLeadingNumber(string value, int suffixLength, out double result) =>
+        double.TryParse(value[..^suffixLength], NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+
+    /// <summary>
+    /// Unwraps a length value that is a single-argument <c>calc()</c>/<c>min()</c>/<c>max()</c>
+    /// function (or redundant parentheses) down to its inner length token — e.g.
+    /// <c>calc(10px)</c> → <c>10px</c>, <c>((2em))</c> → <c>2em</c>. A function containing a
+    /// top-level comma (a genuine multi-argument <c>min()</c>/<c>max()</c>) or an operator is
+    /// left untouched. Canonical CSS-syntax utility shared with the HtmlBridge length parser.
+    /// </summary>
+    public static string NormalizeSingleValueLengthFunction(string value)
     {
         var current = value.Trim();
         while (TryUnwrapSingleValueFunction(current, "calc", out var inner) ||
@@ -620,7 +690,13 @@ public static class CssLengthParser
         return true;
     }
 
-    private static bool HasBalancedParens(string value)
+    /// <summary>
+    /// Whether every <c>(</c> in <paramref name="value"/> has a matching <c>)</c> and no
+    /// <c>)</c> appears before its opener — i.e. the parentheses nest correctly. Canonical
+    /// CSS-syntax utility shared with the HtmlBridge length parser (used to validate the
+    /// body of a <c>calc()</c>/<c>min()</c>/<c>max()</c> before evaluating it).
+    /// </summary>
+    public static bool HasBalancedParens(string value)
     {
         var depth = 0;
         foreach (var ch in value)
@@ -723,10 +799,14 @@ public static class CssLengthParser
         if (string.IsNullOrEmpty(borderValue))
             return GetActualBorderWidth(CssConstants.Medium, emHeight);
 
+        // CSS spec / browser used values for the border-width keywords: thin=1px,
+        // medium=3px, thick=5px. This is the single source of truth for the keyword
+        // widths across the layout engine, the HtmlBridge anchor resolver, and the
+        // native anchor path (which previously carried their own drifted copies).
         return borderValue switch
         {
             CssConstants.Thin => (double)1f,
-            CssConstants.Medium => (double)2f,
+            CssConstants.Medium => (double)3f,
             CssConstants.Thick => (double)5f,
             _ => Math.Abs(ParseLength(borderValue, 1, emHeight)),
         };

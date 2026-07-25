@@ -992,28 +992,7 @@ public sealed partial class CssStyleEngine
         var parts = SplitCssValues(value);
         if (parts.Length == 0) return;
 
-        string top, right, bottom, left;
-        switch (parts.Length)
-        {
-            case 1:
-                top = right = bottom = left = parts[0];
-                break;
-            case 2:
-                top = bottom = parts[0];
-                right = left = parts[1];
-                break;
-            case 3:
-                top = parts[0];
-                right = left = parts[1];
-                bottom = parts[2];
-                break;
-            default:
-                top = parts[0];
-                right = parts[1];
-                bottom = parts[2];
-                left = parts[3];
-                break;
-        }
+        var (top, right, bottom, left) = CssBoxShorthand.SelectTrbl(parts);
 
         if (!computed.ContainsKey(topProp)) computed[topProp] = top;
         if (!computed.ContainsKey(rightProp)) computed[rightProp] = right;
@@ -1477,28 +1456,28 @@ public sealed partial class CssStyleEngine
             case "min-height":
                 if (value != null)
                 {
-                    var px = ParseCssLengthToPixels(value, viewportWidth, viewportHeight);
+                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
                     return !double.IsNaN(px) && viewportHeight >= Math.Max(0, px);
                 }
                 return false;
             case "max-height":
                 if (value != null)
                 {
-                    var px = ParseCssLengthToPixels(value, viewportWidth, viewportHeight);
+                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
                     return !double.IsNaN(px) && viewportHeight <= Math.Max(0, px);
                 }
                 return true;
             case "min-width":
                 if (value != null)
                 {
-                    var px = ParseCssLengthToPixels(value, viewportWidth, viewportHeight);
+                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
                     return !double.IsNaN(px) && viewportWidth >= Math.Max(0, px);
                 }
                 return false;
             case "max-width":
                 if (value != null)
                 {
-                    var px = ParseCssLengthToPixels(value, viewportWidth, viewportHeight);
+                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
                     return !double.IsNaN(px) && viewportWidth <= Math.Max(0, px);
                 }
                 return true;
@@ -1573,7 +1552,7 @@ public sealed partial class CssStyleEngine
             return true;
         if (v.EndsWith('%'))
             return double.TryParse(v[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out _);
-        return !double.IsNaN(ParseCssLengthToPixels(v));
+        return !double.IsNaN(CssLengthParser.ParseToPixels(v));
     }
 
     // Properties whose grammar takes a <length-percentage> (optionally alongside
@@ -1711,112 +1690,4 @@ public sealed partial class CssStyleEngine
     private static bool IsCssIdentifierChar(char c) =>
         char.IsLetterOrDigit(c) || c == '-' || c == '_';
 
-    private static double ParseCssLengthToPixels(string value, int viewportWidth = 0, int viewportHeight = 0)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return double.NaN;
-
-        var v = NormalizeSingleValueLengthFunction(value).Trim().ToLowerInvariant();
-        if (viewportHeight > 0 && v.EndsWith("vh"))
-            return ParseUnit(v, 2, out var vh) ? (vh / 100.0) * viewportHeight : double.NaN;
-        if (viewportWidth > 0 && v.EndsWith("vw"))
-            return ParseUnit(v, 2, out var vw) ? (vw / 100.0) * viewportWidth : double.NaN;
-
-        var viewportMin = Math.Min(viewportWidth, viewportHeight);
-        if (viewportMin > 0 && v.EndsWith("vmin"))
-            return ParseUnit(v, 4, out var vmin) ? (vmin / 100.0) * viewportMin : double.NaN;
-
-        var viewportMax = Math.Max(viewportWidth, viewportHeight);
-        if (viewportMax > 0 && v.EndsWith("vmax"))
-            return ParseUnit(v, 4, out var vmax) ? (vmax / 100.0) * viewportMax : double.NaN;
-
-        if (v.EndsWith("px"))
-            return ParseUnit(v, 2, out var px) ? px : double.NaN;
-        if (v.EndsWith("rem"))
-            return ParseUnit(v, 3, out var rem) ? rem * 16.0 : double.NaN;
-        if (v.EndsWith("em"))
-            return ParseUnit(v, 2, out var em) ? em * 16.0 : double.NaN;
-        if (v.EndsWith("ex"))
-            return ParseUnit(v, 2, out var ex) ? ex * 8.0 : double.NaN;
-        if (v.EndsWith("ch"))
-            return ParseUnit(v, 2, out var ch) ? ch * 8.0 : double.NaN;
-        if (v.EndsWith("ic"))
-            return ParseUnit(v, 2, out var ic) ? ic * 16.0 : double.NaN;
-        if (v.EndsWith("rlh"))
-            return ParseUnit(v, 3, out var rlh) ? rlh * 19.2 : double.NaN;
-        if (v.EndsWith("lh"))
-            return ParseUnit(v, 2, out var lh) ? lh * 19.2 : double.NaN;
-
-        if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var raw))
-            return raw;
-        return double.NaN;
-    }
-
-    private static bool ParseUnit(string value, int suffixLength, out double result) =>
-        double.TryParse(value[..^suffixLength], NumberStyles.Float, CultureInfo.InvariantCulture, out result);
-
-    private static string NormalizeSingleValueLengthFunction(string value)
-    {
-        var current = value.Trim();
-        while (TryUnwrapSingleValueFunction(current, "calc", out var inner) ||
-               TryUnwrapSingleValueFunction(current, "max", out inner) ||
-               TryUnwrapSingleValueFunction(current, "min", out inner))
-        {
-            current = inner.Trim();
-        }
-
-        while (current.Length >= 2 && current[0] == '(' && current[^1] == ')' && HasBalancedParens(current[1..^1]))
-            current = current[1..^1].Trim();
-
-        return current;
-    }
-
-    private static bool TryUnwrapSingleValueFunction(string value, string functionName, out string inner)
-    {
-        inner = string.Empty;
-        if (!value.StartsWith(functionName + "(", StringComparison.OrdinalIgnoreCase) || value.Length == 0 || value[^1] != ')')
-            return false;
-
-        var content = value[(functionName.Length + 1)..^1];
-        if (!HasBalancedParens(content))
-            return false;
-
-        var depth = 0;
-        foreach (var ch in content)
-        {
-            switch (ch)
-            {
-                case '(':
-                    depth++;
-                    break;
-                case ')':
-                    depth--;
-                    break;
-                case ',' when depth == 0:
-                    return false;
-            }
-        }
-
-        inner = content;
-        return true;
-    }
-
-    private static bool HasBalancedParens(string value)
-    {
-        var depth = 0;
-        foreach (var ch in value)
-        {
-            if (ch == '(')
-            {
-                depth++;
-            }
-            else if (ch == ')')
-            {
-                depth--;
-                if (depth < 0)
-                    return false;
-            }
-        }
-
-        return depth == 0;
-    }
 }

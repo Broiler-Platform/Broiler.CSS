@@ -156,8 +156,31 @@ public static class CssomRuleMetadata
         return new CssNamespaceMetadata(prefix, namespaceUri);
     }
 
+    /// <summary>
+    /// Strips one matching layer of single or double quotes from an at-rule descriptor
+    /// value (e.g. an <c>@property</c> <c>syntax</c> descriptor), leaving unquoted input
+    /// unchanged.
+    /// </summary>
+    public static string UnquoteDescriptor(string value)
+    {
+        value = value.Trim();
+        if (value.Length >= 2 && (value[0] == '"' || value[0] == '\'') && value[^1] == value[0])
+            return value[1..^1];
+
+        return value;
+    }
+
+    /// <summary>
+    /// Escapes backslashes and double quotes so a descriptor value can be re-emitted
+    /// inside a double-quoted CSS string (used when serializing <c>@property</c>
+    /// <c>cssText</c>).
+    /// </summary>
+    public static string EscapeDescriptorString(string value) =>
+        value.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+
     /// <summary>Extracts a namespace URI from a quoted string or <c>url(...)</c> token.</summary>
-    private static string ExtractNamespaceUri(string uriPart)
+    public static string ExtractNamespaceUri(string uriPart)
     {
         uriPart = uriPart.Trim();
 

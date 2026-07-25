@@ -285,7 +285,7 @@ public sealed partial class CssStyleEngine
             return false;
 
         var trimmed = value.Trim();
-        return trimmed == "0" || !double.IsNaN(ParseCssLengthToPixels(trimmed));
+        return trimmed == "0" || !double.IsNaN(CssLengthParser.ParseToPixels(trimmed));
     }
 
     // ---- Form-control approximate sizing -----------------------------------
