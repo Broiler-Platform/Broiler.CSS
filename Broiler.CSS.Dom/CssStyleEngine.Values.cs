@@ -1340,65 +1340,154 @@ public sealed partial class CssStyleEngine
 
     // ---- Media queries -----------------------------------------------------
 
+    // Device characteristics Broiler renders with: a continuous, colour, fine-pointer
+    // screen surface at 1× device-pixel-ratio and the light colour scheme.
+    private const int DeviceColorDepth = 8;
+    private const int DeviceMonochromeDepth = 0;
+    private const double DeviceDpi = 96.0;
+    private const double DeviceDppx = 1.0;
+
+    /// <summary>
+    /// Tri-state outcome of evaluating a media query or one of its terms.
+    /// Media Queries 4 distinguishes "does not match" from "does not parse":
+    /// a malformed query is replaced by <c>not all</c>, and an unrecognised
+    /// feature parses as <c>&lt;general-enclosed&gt;</c> whose value is
+    /// <em>unknown</em>. Both must stay false through a leading <c>not</c>, so
+    /// they cannot be collapsed into a plain bool — negating them would turn a
+    /// query the engine cannot honour into one that matches everything.
+    /// </summary>
+    private enum MediaMatch
+    {
+        NoMatch,
+        Match,
+        Invalid,
+    }
+
+    /// <summary>Whether a feature was written in its plain, <c>min-</c> or <c>max-</c> form.</summary>
+    private enum MediaFeatureRange
+    {
+        Plain,
+        Min,
+        Max,
+    }
+
+    // Idents the Media Queries grammar excludes from <media-type>. The boolean
+    // keywords are excluded so `not`/`and`/`or`/`only` stay unambiguous; `layer`
+    // joins them because css-cascade-5 reserves it for `@import … layer`, so
+    // `@media layer` and `@media not layer` are malformed rather than a query
+    // against an unknown media type (which `not` would otherwise make match).
+    private static readonly string[] ReservedMediaTypeIdents =
+        ["only", "not", "and", "or", "layer"];
+
     private static bool EvaluateMediaQuery(string query, int viewportWidth, int viewportHeight)
     {
-        var queries = query.Split(',');
-        foreach (var q in queries)
+        // An empty <media-query-list> is equivalent to `all` and always matches:
+        // `@media { … }` (whitespace after the at-keyword is optional) and
+        // `<style media="">` apply unconditionally.
+        if (string.IsNullOrWhiteSpace(query))
+            return true;
+
+        foreach (var q in CssSyntax.SplitTopLevel(query, ','))
         {
-            if (EvaluateSingleMediaQuery(q.Trim(), viewportWidth, viewportHeight))
+            if (EvaluateSingleMediaQuery(q, viewportWidth, viewportHeight) == MediaMatch.Match)
                 return true;
         }
         return false;
     }
 
-    private static bool EvaluateSingleMediaQuery(string query, int viewportWidth, int viewportHeight)
+    private static MediaMatch EvaluateSingleMediaQuery(string query, int viewportWidth, int viewportHeight)
     {
-        if (string.IsNullOrWhiteSpace(query)) return false;
-
-        bool negate = false;
         var q = query.Trim();
 
-        if (q.StartsWith("not ", StringComparison.OrdinalIgnoreCase))
-        {
+        // An empty query inside a non-empty list ("screen, ") is malformed; only a
+        // wholly empty list means `all`, and that is handled by the caller.
+        if (q.Length == 0)
+            return MediaMatch.Invalid;
+
+        var negate = false;
+        var requireMediaType = false;
+
+        if (TryStripLeadingKeyword(ref q, "not"))
             negate = true;
-            q = q[4..].TrimStart();
-        }
-        else if (q.StartsWith("only ", StringComparison.OrdinalIgnoreCase))
-        {
-            q = q[5..].TrimStart();
-        }
+        else if (TryStripLeadingKeyword(ref q, "only"))
+            requireMediaType = true; // `only` may precede a <media-type> and nothing else.
+
+        if (q.Length == 0)
+            return MediaMatch.Invalid;
 
         var parts = SplitMediaQueryParts(q);
-        bool result = true;
+        var result = MediaMatch.Match;
 
-        foreach (var part in parts)
+        for (var i = 0; i < parts.Count; i++)
         {
-            var p = part.Trim();
-            if (string.IsNullOrEmpty(p)) continue;
+            var p = parts[i].Trim();
+            if (p.Length == 0)
+                return MediaMatch.Invalid; // a dangling or doubled `and`
 
-            if (p.Equals("all", StringComparison.OrdinalIgnoreCase) ||
-                p.Equals("screen", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
+            MediaMatch term;
             if (p.StartsWith('(') && p.EndsWith(')'))
             {
-                var condition = p[1..^1].Trim();
-                if (!EvaluateMediaCondition(condition, viewportWidth, viewportHeight))
-                {
-                    result = false;
-                    break;
-                }
+                if (i == 0 && requireMediaType)
+                    return MediaMatch.Invalid;
+                term = EvaluateMediaCondition(p[1..^1].Trim(), viewportWidth, viewportHeight);
+            }
+            else if (i == 0)
+            {
+                term = EvaluateMediaType(p);
             }
             else
             {
-                result = false;
-                break;
+                // Only the leading term may be a <media-type>; everything after an
+                // `and` has to be a parenthesised <media-condition>.
+                return MediaMatch.Invalid;
             }
+
+            // A malformed or unknown term poisons the whole query — keep scanning
+            // no further, the answer is `not all` regardless of the other terms.
+            if (term == MediaMatch.Invalid)
+                return MediaMatch.Invalid;
+            if (term == MediaMatch.NoMatch)
+                result = MediaMatch.NoMatch;
         }
 
-        return negate ? !result : result;
+        if (negate)
+            result = result == MediaMatch.Match ? MediaMatch.NoMatch : MediaMatch.Match;
+        return result;
+    }
+
+    // Strips a leading `not`/`only` keyword when it is a whole word followed by
+    // whitespace, so `not screen` is a negation while `nothing` is a media type.
+    private static bool TryStripLeadingKeyword(ref string query, string keyword)
+    {
+        if (query.Length <= keyword.Length ||
+            !query.StartsWith(keyword, StringComparison.OrdinalIgnoreCase) ||
+            !char.IsWhiteSpace(query[keyword.Length]))
+        {
+            return false;
+        }
+
+        query = query[keyword.Length..].TrimStart();
+        return true;
+    }
+
+    private static MediaMatch EvaluateMediaType(string type)
+    {
+        if (!IsMediaIdent(type))
+            return MediaMatch.Invalid;
+
+        foreach (var reserved in ReservedMediaTypeIdents)
+        {
+            if (type.Equals(reserved, StringComparison.OrdinalIgnoreCase))
+                return MediaMatch.Invalid;
+        }
+
+        // Broiler paints to a continuous screen surface, so `all` and `screen`
+        // match; every other well-formed media type (`print`, `speech`, and the
+        // deprecated `tv`/`handheld`/… set) simply does not — but stays valid, so
+        // `not print` correctly matches.
+        return Matched(
+            type.Equals("all", StringComparison.OrdinalIgnoreCase) ||
+            type.Equals("screen", StringComparison.OrdinalIgnoreCase));
     }
 
     private static List<string> SplitMediaQueryParts(string query)
@@ -1425,119 +1514,324 @@ public sealed partial class CssStyleEngine
         return parts;
     }
 
-    private static bool EvaluateMediaCondition(string condition, int viewportWidth, int viewportHeight)
+    private static MediaMatch EvaluateMediaCondition(string condition, int viewportWidth, int viewportHeight)
     {
         var colonIdx = condition.IndexOf(':');
-        string feature;
+        string name;
         string? value = null;
         if (colonIdx >= 0)
         {
-            feature = condition[..colonIdx].Trim().ToLowerInvariant();
+            name = condition[..colonIdx].Trim().ToLowerInvariant();
             value = condition[(colonIdx + 1)..].Trim();
+            if (value.Length == 0)
+                return MediaMatch.Invalid;
         }
         else
         {
-            feature = condition.Trim().ToLowerInvariant();
+            name = condition.Trim().ToLowerInvariant();
         }
 
-        const int ColorDepth = 8;
-        const int MonochromeDepth = 0;
+        if (!IsMediaIdent(name))
+            return MediaMatch.Invalid;
 
-        switch (feature)
+        // `-webkit-device-pixel-ratio` (and its min-/max- forms) is the legacy
+        // spelling of `resolution`; no other feature takes the prefix.
+        var webkit = name.StartsWith("-webkit-", StringComparison.Ordinal);
+        if (webkit)
+            name = name["-webkit-".Length..];
+
+        var range = MediaFeatureRange.Plain;
+        if (name.StartsWith("min-", StringComparison.Ordinal))
         {
-            case "min-color":
-                return value != null && int.TryParse(value, out var minColor) && minColor <= ColorDepth;
-            case "max-color":
-                return value != null && int.TryParse(value, out var maxColor) && maxColor >= ColorDepth;
-            case "min-monochrome":
-                return value != null && int.TryParse(value, out var minMono) && minMono <= MonochromeDepth;
-            case "max-monochrome":
-                return value != null && int.TryParse(value, out var maxMono) && maxMono >= MonochromeDepth;
-            case "min-height":
-                if (value != null)
-                {
-                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
-                    return !double.IsNaN(px) && viewportHeight >= Math.Max(0, px);
-                }
-                return false;
-            case "max-height":
-                if (value != null)
-                {
-                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
-                    return !double.IsNaN(px) && viewportHeight <= Math.Max(0, px);
-                }
-                return true;
-            case "min-width":
-                if (value != null)
-                {
-                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
-                    return !double.IsNaN(px) && viewportWidth >= Math.Max(0, px);
-                }
-                return false;
-            case "max-width":
-                if (value != null)
-                {
-                    var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
-                    return !double.IsNaN(px) && viewportWidth <= Math.Max(0, px);
-                }
-                return true;
+            range = MediaFeatureRange.Min;
+            name = name[4..];
+        }
+        else if (name.StartsWith("max-", StringComparison.Ordinal))
+        {
+            range = MediaFeatureRange.Max;
+            name = name[4..];
+        }
+
+        // The min-/max- prefixed forms are ranges: they have no boolean spelling,
+        // so `(min-width)` is malformed rather than false.
+        if (range != MediaFeatureRange.Plain && value is null)
+            return MediaMatch.Invalid;
+
+        if (webkit && name != "device-pixel-ratio")
+            return MediaMatch.Invalid;
+
+        var aspectRatio = viewportHeight > 0 ? (double)viewportWidth / viewportHeight : 0;
+
+        switch (name)
+        {
+            // ---- <length> range features ----------------------------------
+            case "width":
+            case "device-width":
+                return CompareLength(value, viewportWidth, range, viewportWidth, viewportHeight);
+            case "height":
+            case "device-height":
+                return CompareLength(value, viewportHeight, range, viewportWidth, viewportHeight);
+
+            // ---- <ratio> range features -----------------------------------
+            case "aspect-ratio":
+            case "device-aspect-ratio":
+                return CompareRatio(value, aspectRatio, range);
+
+            // ---- <integer> range features ---------------------------------
             case "color":
-                return true;
-            case "-webkit-min-device-pixel-ratio":
-            case "min-device-pixel-ratio":
-                return value != null && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var minDpr) && 1.0 >= minDpr;
-            case "-webkit-max-device-pixel-ratio":
-            case "max-device-pixel-ratio":
-                return value != null && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var maxDpr) && 1.0 <= maxDpr;
-            case "min-resolution":
-                return value != null && EvaluateResolutionCondition(value, isMin: true);
-            case "max-resolution":
-                return value != null && EvaluateResolutionCondition(value, isMin: false);
+                return CompareInteger(value, DeviceColorDepth, range, booleanIsMatch: true);
+            case "color-index":
+                return CompareInteger(value, 0, range, booleanIsMatch: false);
+            case "monochrome":
+                return CompareInteger(value, DeviceMonochromeDepth, range, booleanIsMatch: false);
+            case "grid":
+                // 0 = bitmap device, 1 = grid (terminal) device.
+                return CompareInteger(value, 0, range, booleanIsMatch: false);
+
+            // ---- <resolution> range features ------------------------------
+            case "resolution":
+                return CompareResolution(value, range);
+            case "device-pixel-ratio":
+                return CompareNumber(value, DeviceDppx, range);
+
+            // ---- Discrete features ----------------------------------------
+            case "orientation":
+                return Discrete(
+                    value, range,
+                    viewportHeight > viewportWidth ? "portrait" : "landscape",
+                    ["portrait", "landscape"],
+                    booleanContext: MediaMatch.Match);
+            case "scan":
+                return Discrete(value, range, "progressive", ["interlace", "progressive"], MediaMatch.Match);
+            case "update":
+                return Discrete(value, range, "fast", ["none", "slow", "fast"], MediaMatch.Match);
+            case "overflow-block":
+                return Discrete(value, range, "scroll", ["none", "scroll", "paged", "optional-paged"], MediaMatch.Match);
+            case "overflow-inline":
+                return Discrete(value, range, "scroll", ["none", "scroll"], MediaMatch.Match);
             case "pointer":
             case "any-pointer":
-                return value != null && value.Trim().Equals("fine", StringComparison.OrdinalIgnoreCase);
+                return Discrete(value, range, "fine", ["none", "coarse", "fine"], MediaMatch.Match);
             case "hover":
             case "any-hover":
-                return value != null && value.Trim().Equals("hover", StringComparison.OrdinalIgnoreCase);
+                return Discrete(value, range, "hover", ["none", "hover"], MediaMatch.Match);
+            case "color-gamut":
+                return Discrete(value, range, "srgb", ["srgb", "p3", "rec2020"], MediaMatch.Match);
+            case "dynamic-range":
+            case "video-dynamic-range":
+                return Discrete(value, range, "standard", ["standard", "high"], MediaMatch.Match);
+            case "scripting":
+                return Discrete(value, range, "enabled", ["none", "initial-only", "enabled"], MediaMatch.Match);
+            case "display-mode":
+                return Discrete(
+                    value, range, "browser",
+                    ["browser", "standalone", "minimal-ui", "fullscreen", "picture-in-picture"],
+                    MediaMatch.Match);
+            case "forced-colors":
+                return Discrete(value, range, "none", ["none", "active"], MediaMatch.NoMatch);
+            case "inverted-colors":
+                return Discrete(value, range, "none", ["none", "inverted"], MediaMatch.NoMatch);
             case "prefers-color-scheme":
-                return value != null && value.Trim().Equals("light", StringComparison.OrdinalIgnoreCase);
+                return Discrete(value, range, "light", ["light", "dark"], MediaMatch.Match);
+            case "prefers-contrast":
+                return Discrete(
+                    value, range, "no-preference",
+                    ["no-preference", "less", "more", "custom"],
+                    MediaMatch.NoMatch);
             case "prefers-reduced-motion":
-                return value != null && value.Trim().Equals("no-preference", StringComparison.OrdinalIgnoreCase);
+                return Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch);
+            case "prefers-reduced-transparency":
+                return Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch);
+            case "prefers-reduced-data":
+                return Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch);
+
             default:
-                return false;
+                // <general-enclosed>: parses, but its value is unknown — which is
+                // false, and stays false under `not`.
+                return MediaMatch.Invalid;
         }
     }
 
-    private static bool EvaluateResolutionCondition(string value, bool isMin)
+    private static MediaMatch Matched(bool matches) => matches ? MediaMatch.Match : MediaMatch.NoMatch;
+
+    // Boolean context ("(width)") is true when the feature's value is non-zero;
+    // the min-/max- forms compare, the plain form is an equality test.
+    private static MediaMatch CompareLength(
+        string? value,
+        double actual,
+        MediaFeatureRange range,
+        int viewportWidth,
+        int viewportHeight)
     {
-        const double DeviceDpi = 96.0;
-        const double DeviceDppx = 1.0;
+        if (value is null)
+            return Matched(actual != 0);
+
+        var px = CssLengthParser.ParseToPixels(value, viewportWidth, viewportHeight);
+        if (double.IsNaN(px))
+            return MediaMatch.Invalid;
+
+        px = Math.Max(0, px);
+        return range switch
+        {
+            MediaFeatureRange.Min => Matched(actual >= px),
+            MediaFeatureRange.Max => Matched(actual <= px),
+            _ => Matched(Math.Abs(actual - px) < 0.5),
+        };
+    }
+
+    private static MediaMatch CompareInteger(
+        string? value,
+        int actual,
+        MediaFeatureRange range,
+        bool booleanIsMatch)
+    {
+        if (value is null)
+            return Matched(booleanIsMatch);
+
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var bound))
+            return MediaMatch.Invalid;
+
+        return range switch
+        {
+            MediaFeatureRange.Min => Matched(actual >= bound),
+            MediaFeatureRange.Max => Matched(actual <= bound),
+            _ => Matched(actual == bound),
+        };
+    }
+
+    private static MediaMatch CompareNumber(string? value, double actual, MediaFeatureRange range)
+    {
+        if (value is null)
+            return Matched(actual != 0);
+
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var bound))
+            return MediaMatch.Invalid;
+
+        return range switch
+        {
+            MediaFeatureRange.Min => Matched(actual >= bound),
+            MediaFeatureRange.Max => Matched(actual <= bound),
+            _ => Matched(Math.Abs(actual - bound) < 1e-6),
+        };
+    }
+
+    // <ratio> = <number [0,∞]> [ / <number [0,∞]> ]? — a bare number is "n / 1".
+    private static MediaMatch CompareRatio(string? value, double actual, MediaFeatureRange range)
+    {
+        if (value is null)
+            return Matched(actual != 0);
+
+        var slash = value.IndexOf('/');
+        double numerator, denominator = 1;
+        if (slash >= 0)
+        {
+            if (!double.TryParse(value[..slash].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out numerator) ||
+                !double.TryParse(value[(slash + 1)..].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out denominator))
+            {
+                return MediaMatch.Invalid;
+            }
+        }
+        else if (!double.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out numerator))
+        {
+            return MediaMatch.Invalid;
+        }
+
+        if (numerator < 0 || denominator <= 0)
+            return MediaMatch.Invalid;
+
+        var bound = numerator / denominator;
+        return range switch
+        {
+            MediaFeatureRange.Min => Matched(actual >= bound),
+            MediaFeatureRange.Max => Matched(actual <= bound),
+            _ => Matched(Math.Abs(actual - bound) < 1e-6),
+        };
+    }
+
+    // A discrete feature matches when its value equals the device's; a value
+    // outside the feature's keyword set is malformed, not merely unmatched.
+    private static MediaMatch Discrete(
+        string? value,
+        MediaFeatureRange range,
+        string deviceValue,
+        string[] allowed,
+        MediaMatch booleanContext)
+    {
+        // Discrete features have no range form: `(min-orientation: portrait)` is
+        // malformed.
+        if (range != MediaFeatureRange.Plain)
+            return MediaMatch.Invalid;
+
+        if (value is null)
+            return booleanContext;
+
+        foreach (var candidate in allowed)
+        {
+            if (value.Equals(candidate, StringComparison.OrdinalIgnoreCase))
+                return Matched(value.Equals(deviceValue, StringComparison.OrdinalIgnoreCase));
+        }
+        return MediaMatch.Invalid;
+    }
+
+    private static MediaMatch CompareResolution(string? value, MediaFeatureRange range)
+    {
+        if (value is null)
+            return Matched(true); // a screen always has a resolution
 
         var v = value.Trim().ToLowerInvariant();
         double target;
+        double actual;
 
-        if (v.EndsWith("dppx"))
+        if (v.EndsWith("dppx", StringComparison.Ordinal) || v.EndsWith("x", StringComparison.Ordinal))
+        {
+            var digits = v.EndsWith("dppx", StringComparison.Ordinal) ? v[..^4] : v[..^1];
+            if (!double.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out target))
+                return MediaMatch.Invalid;
+            actual = DeviceDppx;
+        }
+        else if (v.EndsWith("dpcm", StringComparison.Ordinal))
         {
             if (!double.TryParse(v[..^4], NumberStyles.Float, CultureInfo.InvariantCulture, out target))
-                return false;
-            return isMin ? DeviceDppx >= target : DeviceDppx <= target;
+                return MediaMatch.Invalid;
+            actual = DeviceDpi / 2.54;
         }
-        if (v.EndsWith("dpi"))
+        else if (v.EndsWith("dpi", StringComparison.Ordinal))
         {
             if (!double.TryParse(v[..^3], NumberStyles.Float, CultureInfo.InvariantCulture, out target))
-                return false;
-            return isMin ? DeviceDpi >= target : DeviceDpi <= target;
+                return MediaMatch.Invalid;
+            actual = DeviceDpi;
         }
-        if (v.EndsWith("dpcm"))
+        else
         {
-            if (!double.TryParse(v[..^4], NumberStyles.Float, CultureInfo.InvariantCulture, out target))
-                return false;
-            double deviceDpcm = DeviceDpi / 2.54;
-            return isMin ? deviceDpcm >= target : deviceDpcm <= target;
+            // A <resolution> must carry a unit; a bare number is malformed.
+            return MediaMatch.Invalid;
         }
-        if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out target))
-            return isMin ? DeviceDpi >= target : DeviceDpi <= target;
-        return false;
+
+        return range switch
+        {
+            MediaFeatureRange.Min => Matched(actual >= target),
+            MediaFeatureRange.Max => Matched(actual <= target),
+            _ => Matched(Math.Abs(actual - target) < 1e-6),
+        };
+    }
+
+    // A media type or feature name must be a CSS <ident>: letters, digits,
+    // hyphens, underscores and non-ASCII, never starting with a digit.
+    private static bool IsMediaIdent(string value)
+    {
+        if (value.Length == 0)
+            return false;
+
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (char.IsLetter(c) || c is '-' or '_' || c > 0x7F)
+                continue;
+            if (char.IsDigit(c) && i > 0)
+                continue;
+            return false;
+        }
+        return true;
     }
 
     // ---- Length parsing ----------------------------------------------------

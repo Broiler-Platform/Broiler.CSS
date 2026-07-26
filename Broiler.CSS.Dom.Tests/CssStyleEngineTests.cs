@@ -21,6 +21,116 @@ public sealed class CssStyleEngineTests
                 new CssEnvironment(viewportWidth, viewportHeight)));
     }
 
+    // An empty <media-query-list> is `all`: `@media { … }` (whitespace after the
+    // at-keyword is optional) and `<style media="">` apply unconditionally.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void MatchesMediaQuery_Empty_List_Means_All(string query) =>
+        Assert.True(CssStyleEngine.MatchesMediaQuery(query, new CssEnvironment(800, 600)));
+
+    // `layer` is excluded from <media-type> (css-cascade-5 reserves it for
+    // `@import … layer`), so both spellings are malformed → `not all`. The
+    // negated form is the interesting one: an *unknown* media type makes `not`
+    // match, and a malformed one must not.
+    [Theory]
+    [InlineData("layer")]
+    [InlineData("not layer")]
+    [InlineData("only layer")]
+    [InlineData("not and")]
+    [InlineData("not or")]
+    [InlineData("not only")]
+    [InlineData("not not")]
+    public void MatchesMediaQuery_Reserved_Media_Type_Is_Malformed(string query) =>
+        Assert.False(CssStyleEngine.MatchesMediaQuery(query, new CssEnvironment(800, 600)));
+
+    // A well-formed but non-matching media type stays negatable.
+    [Theory]
+    [InlineData("print", false)]
+    [InlineData("not print", true)]
+    [InlineData("tv", false)]
+    [InlineData("not tv", true)]
+    [InlineData("only screen", true)]
+    [InlineData("only (min-width: 1px)", false)]
+    public void MatchesMediaQuery_Unknown_Media_Types_Remain_Valid(string query, bool expected) =>
+        Assert.Equal(expected, CssStyleEngine.MatchesMediaQuery(query, new CssEnvironment(800, 600)));
+
+    // An unrecognised feature is <general-enclosed>: its value is *unknown*,
+    // which is false and stays false through `not` — it must never be negated
+    // into a match. Same for anything that simply does not parse.
+    [Theory]
+    [InlineData("(totally-unknown-feature: 3)")]
+    [InlineData("not (totally-unknown-feature: 3)")]
+    [InlineData("(min-width)")]
+    [InlineData("not (min-width)")]
+    [InlineData("(pointer: banana)")]
+    [InlineData("not (pointer: banana)")]
+    [InlineData("(min-width: notalength)")]
+    [InlineData("not (min-width: notalength)")]
+    [InlineData("screen and print")]
+    [InlineData("not screen and print")]
+    [InlineData("screen and ")]
+    public void MatchesMediaQuery_Unknown_Or_Malformed_Terms_Never_Match(string query) =>
+        Assert.False(CssStyleEngine.MatchesMediaQuery(query, new CssEnvironment(800, 600)));
+
+    [Theory]
+    [InlineData("(orientation: landscape)", 800, 600, true)]
+    [InlineData("(orientation: portrait)", 800, 600, false)]
+    [InlineData("not (orientation: portrait)", 800, 600, true)]
+    [InlineData("(orientation: portrait)", 600, 800, true)]
+    [InlineData("(pointer: coarse)", 800, 600, false)]
+    [InlineData("not (pointer: coarse)", 800, 600, true)]
+    [InlineData("(hover: hover)", 800, 600, true)]
+    [InlineData("(forced-colors: none)", 800, 600, true)]
+    [InlineData("(prefers-color-scheme: dark)", 800, 600, false)]
+    [InlineData("(min-resolution: 2dppx)", 800, 600, false)]
+    [InlineData("(max-resolution: 2dppx)", 800, 600, true)]
+    [InlineData("(width: 800px)", 800, 600, true)]
+    [InlineData("(width: 801px)", 800, 600, false)]
+    [InlineData("(min-aspect-ratio: 1/1)", 800, 600, true)]
+    [InlineData("(max-aspect-ratio: 1/1)", 800, 600, false)]
+    [InlineData("(color)", 800, 600, true)]
+    [InlineData("(monochrome)", 800, 600, false)]
+    [InlineData("not (monochrome)", 800, 600, true)]
+    [InlineData("print, screen", 800, 600, true)]
+    [InlineData("print, tv", 800, 600, false)]
+    public void MatchesMediaQuery_Evaluates_Media_Features(
+        string query,
+        int viewportWidth,
+        int viewportHeight,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            CssStyleEngine.MatchesMediaQuery(
+                query,
+                new CssEnvironment(viewportWidth, viewportHeight)));
+    }
+
+    // css/css-conditional/at-media-whitespace-optional-001: `@media{ … }` has an
+    // empty query list, so its rules cascade like any unconditional rule.
+    [Fact]
+    public void MediaRule_With_Empty_Prelude_Applies()
+    {
+        var (_, _, body) = NewDocument();
+        var engine = EngineWith("@media{ body { background-color: lime; } }");
+
+        Assert.Equal("lime", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+    }
+
+    // css/mediaqueries/mq-invalid-media-type-layer-002: `@media not layer` is a
+    // syntax error, not a negated unknown media type, so its rules never apply.
+    [Fact]
+    public void MediaRule_With_Layer_Media_Type_Never_Applies()
+    {
+        var (_, _, body) = NewDocument();
+        var engine = EngineWith(
+            "@media not layer { body { background-color: red; } } " +
+            "@media layer { body { background-color: red; } }");
+
+        Assert.NotEqual("red", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+    }
+
     private static CssStyleEngine EngineWith(string css, ICssSelectorStateProvider? state = null)
     {
         var engine = new CssStyleEngine(state);
