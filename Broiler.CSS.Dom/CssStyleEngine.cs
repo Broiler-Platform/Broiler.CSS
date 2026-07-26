@@ -23,6 +23,19 @@ namespace Broiler.CSS.Dom;
 public sealed partial class CssStyleEngine
 {
     private readonly CssSelectorMatcher _matcher;
+    // Guards every mutable field below (_sheets, the three memo caches, _observedDocuments,
+    // _registrations, _cacheGeneration). The engine is re-entered concurrently: the HtmlBridge's
+    // GetComputedProps routes through this engine's sparse projection, and JS continuations
+    // dispatched on ThreadPool threads run that computed-style/geometry work concurrently with the
+    // main-thread layout pass — a plain Dictionary/List corrupts under that race and aborts the
+    // process ("non-concurrent collections must have exclusive access", WPT #1445; the sibling
+    // bridge memo maps were made concurrent for the same reason in #1143). Critical sections are
+    // kept tight and NEVER span the cascade computation, which calls back into the host (selector
+    // matching → DOM bridge → re-sync of this engine's stylesheets); holding the lock across that
+    // re-entrant callback is unnecessary (Monitor is reentrant per-thread) and would widen the
+    // critical section for no benefit. Stylesheet snapshots + the cache-store generation guard make
+    // the lock-free compute window self-consistent.
+    private readonly object _sync = new();
     private readonly List<StyleSheetEntry> _sheets = [];
     private readonly Dictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = [];
     // Sparse computed-style memo: the specified + sparse-inheritance projection (no
@@ -80,17 +93,23 @@ public sealed partial class CssStyleEngine
     public void AddStyleSheet(CssStyleSheet sheet, CssOrigin origin = CssOrigin.Author)
     {
         ArgumentNullException.ThrowIfNull(sheet);
-        _sheets.Add(new StyleSheetEntry(sheet, origin));
-        InvalidateAll();
+        lock (_sync)
+        {
+            _sheets.Add(new StyleSheetEntry(sheet, origin));
+            InvalidateAll();
+        }
     }
 
     /// <summary>Removes all registered stylesheets.</summary>
     public void ClearStyleSheets()
     {
-        if (_sheets.Count == 0)
-            return;
-        _sheets.Clear();
-        InvalidateAll();
+        lock (_sync)
+        {
+            if (_sheets.Count == 0)
+                return;
+            _sheets.Clear();
+            InvalidateAll();
+        }
     }
 
     /// <summary>
@@ -144,12 +163,20 @@ public sealed partial class CssStyleEngine
 
         var normalizedPseudo = NormalizePseudoElement(pseudoElement);
         var key = (element, normalizedPseudo);
-        if (_cache.TryGetValue(key, out var cached))
-            return cached;
+        lock (_sync)
+        {
+            if (_cache.TryGetValue(key, out var cached))
+                return cached;
+        }
 
+        // Computed outside the lock: ComputeStyle re-enters the host (selector matching → DOM
+        // bridge) which may mutate this engine's stylesheets, and it recurses into the ancestor
+        // chain. A benign race where two threads compute the same key both store a valid snapshot
+        // (last writer wins); it never corrupts the cache.
         var computed = ComputeStyle(element, normalizedPseudo, []);
         var snapshot = new CssComputedStyle(computed);
-        _cache[key] = snapshot;
+        lock (_sync)
+            _cache[key] = snapshot;
         return snapshot;
     }
 
@@ -388,12 +415,16 @@ public sealed partial class CssStyleEngine
     private CssComputedStyle GetComputedStyleInternal(DomElement element, HashSet<DomElement> ancestorsInProgress)
     {
         var key = ((DomElement, string?))(element, null);
-        if (_cache.TryGetValue(key, out var cached))
-            return cached;
+        lock (_sync)
+        {
+            if (_cache.TryGetValue(key, out var cached))
+                return cached;
+        }
 
         var computed = ComputeStyle(element, pseudoElement: null, ancestorsInProgress);
         var snapshot = new CssComputedStyle(computed);
-        _cache[key] = snapshot;
+        lock (_sync)
+            _cache[key] = snapshot;
         return snapshot;
     }
 
@@ -404,13 +435,17 @@ public sealed partial class CssStyleEngine
         DomElement element, HashSet<DomElement> ancestorsInProgress)
     {
         var key = ((DomElement, string?))(element, null);
-        if (_sparseCache.TryGetValue(key, out var cached))
-            return cached;
+        lock (_sync)
+        {
+            if (_sparseCache.TryGetValue(key, out var cached))
+                return cached;
+        }
 
         IReadOnlyDictionary<string, string> computed = ComputeStyle(
             element, pseudoElement: null, ancestorsInProgress,
             backfillInitials: false, sparseInheritance: true);
-        _sparseCache[key] = computed;
+        lock (_sync)
+            _sparseCache[key] = computed;
         return computed;
     }
 
@@ -523,21 +558,33 @@ public sealed partial class CssStyleEngine
         bool includeInlineStyle)
     {
         var key = (element, pseudoElement, includeInlineStyle);
-        if (_declaredCascadeCache.TryGetValue(key, out var cached))
-            return cached;
+        lock (_sync)
+        {
+            if (_declaredCascadeCache.TryGetValue(key, out var cached))
+                return cached;
+        }
 
-        var generation = _cacheGeneration;
+        // Snapshot the sheet list and cache generation together under the lock before iterating:
+        // selector matching (below) can call back into the host (e.g. the DOM bridge) which may
+        // re-sync this engine's stylesheets mid-cascade (ClearStyleSheets + AddStyleSheet) when the
+        // document mutated — e.g. while anchor positioning rewrites styles — and another thread may
+        // mutate _sheets concurrently. Iterating the live list under either would throw ("Collection
+        // was modified", WPT content-visibility-anchor-positioning; or the concurrent-collection
+        // corruption abort, WPT #1445). The snapshot keeps the in-progress cascade self-consistent
+        // and crash-free, and the generation captured alongside it lets the store below reject a
+        // result that raced an invalidation.
+        int generation;
+        StyleSheetEntry[] sheetsSnapshot;
+        lock (_sync)
+        {
+            generation = _cacheGeneration;
+            sheetsSnapshot = _sheets.ToArray();
+        }
+
         var winners = new Dictionary<string, CascadeSlot>(StringComparer.OrdinalIgnoreCase);
         var order = 0;
 
-        // Snapshot the sheet list before iterating: selector matching can call
-        // back into the host (e.g. the DOM bridge) which may re-sync this engine's
-        // stylesheets mid-cascade (ClearStyleSheets + AddStyleSheet) when the
-        // document mutated — e.g. while anchor positioning rewrites styles. That
-        // structural change to a live foreach would throw "Collection was
-        // modified" (WPT content-visibility-anchor-positioning); the snapshot
-        // keeps the in-progress cascade self-consistent and crash-free.
-        foreach (var entry in _sheets.ToArray())
+        foreach (var entry in sheetsSnapshot)
             CollectFromRules(entry.Sheet.Rules, entry.Origin, element, pseudoElement, winners, ref order);
 
         if (includeInlineStyle && pseudoElement is null)
@@ -564,8 +611,11 @@ public sealed partial class CssStyleEngine
         // Only memoize when no invalidation occurred while this cascade was computed:
         // a host re-sync (see the snapshot note above) bumps the generation and clears
         // the cache, so a result derived from the pre-re-sync sheet snapshot is stale.
-        if (generation == _cacheGeneration)
-            _declaredCascadeCache[key] = map;
+        lock (_sync)
+        {
+            if (generation == _cacheGeneration)
+                _declaredCascadeCache[key] = map;
+        }
 
         return map;
     }

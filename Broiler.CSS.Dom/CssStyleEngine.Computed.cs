@@ -28,15 +28,25 @@ public sealed partial class CssStyleEngine
 
     private Dictionary<string, CustomPropertyRegistration> CollectCustomPropertyRegistrations()
     {
-        if (_registrations is not null)
-            return _registrations;
+        // Snapshot the memo and the sheet list together (see the _sync note in the primary partial):
+        // _sheets is mutated from other threads, so a live foreach here can corrupt/abort under the
+        // same race as the cascade. Compute outside the lock, then publish with a double-checked
+        // store so a concurrent computation's instance is reused rather than replaced — callers get
+        // a stable identity for a given generation.
+        StyleSheetEntry[] sheetsSnapshot;
+        lock (_sync)
+        {
+            if (_registrations is not null)
+                return _registrations;
+            sheetsSnapshot = _sheets.ToArray();
+        }
 
         var registrations = new Dictionary<string, CustomPropertyRegistration>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in _sheets)
+        foreach (var entry in sheetsSnapshot)
             CollectPropertyRules(entry.Sheet.Rules, registrations);
 
-        _registrations = registrations;
-        return registrations;
+        lock (_sync)
+            return _registrations ??= registrations;
     }
 
     private static void CollectPropertyRules(IReadOnlyList<CssRule> rules, Dictionary<string, CustomPropertyRegistration> registrations)
@@ -486,7 +496,16 @@ public sealed partial class CssStyleEngine
 
     private void ObserveDocument(DomElement element)
     {
-        if (element.OwnerDocument is { } document && _observedDocuments.Add(document))
+        if (element.OwnerDocument is not { } document)
+            return;
+
+        bool firstObservation;
+        lock (_sync)
+            firstObservation = _observedDocuments.Add(document);
+
+        // Subscribe outside the lock (event add is itself synchronized); the Add guard ensures
+        // exactly one subscription per document even under concurrent first-time observation.
+        if (firstObservation)
             document.Mutated += OnDocumentMutated;
     }
 
@@ -494,16 +513,20 @@ public sealed partial class CssStyleEngine
 
     private void InvalidateAll()
     {
-        // Bump first: a declared-cascade computation in flight captured the prior
+        // All mutable state is touched under _sync (reentrant: callers such as AddStyleSheet already
+        // hold it). Bump first: a declared-cascade computation in flight captured the prior
         // generation and will decline to memoize its (now-stale) result.
-        _cacheGeneration++;
-        _registrations = null;
-        if (_cache.Count > 0)
-            _cache.Clear();
-        if (_declaredCascadeCache.Count > 0)
-            _declaredCascadeCache.Clear();
-        if (_sparseCache.Count > 0)
-            _sparseCache.Clear();
+        lock (_sync)
+        {
+            _cacheGeneration++;
+            _registrations = null;
+            if (_cache.Count > 0)
+                _cache.Clear();
+            if (_declaredCascadeCache.Count > 0)
+                _declaredCascadeCache.Clear();
+            if (_sparseCache.Count > 0)
+                _sparseCache.Clear();
+        }
     }
 
     // ---- Property metadata -------------------------------------------------
