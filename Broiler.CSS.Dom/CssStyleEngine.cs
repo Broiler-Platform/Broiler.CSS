@@ -652,6 +652,14 @@ public sealed partial class CssStyleEngine
                     if (SupportsConditionSyntax.EvaluatesTrue(atRule.Prelude, IsFeatureQuerySupported))
                         CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
                     break;
+
+                case CssAtRule atRule when atRule.Name.Equals("container", StringComparison.OrdinalIgnoreCase):
+                    // An @container rule applies its contents only when the element's query container
+                    // satisfies the size condition. An unresolved container/size evaluates to false,
+                    // matching the prior behaviour of ignoring the rule (see CssStyleEngine.ContainerQueries).
+                    if (EvaluateContainerQuery(atRule.Prelude, element, pseudoElement))
+                        CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
+                    break;
             }
         }
     }
