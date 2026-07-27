@@ -1095,8 +1095,31 @@ public sealed partial class CssStyleEngine
     // layer), so the expansion MUST preserve every layer and emit clean
     // comma-joined values — dropping layers or leaving a trailing comma
     // corrupts background-image and silently discards layers downstream.
+    // The longhands the `background` shorthand sets (CSS Backgrounds 3 §3.10). background-blend-mode
+    // is deliberately excluded — it is not a `background` sub-property.
+    private static readonly string[] BackgroundLonghandProperties =
+    {
+        "background-color", "background-image", "background-repeat", "background-attachment",
+        "background-position", "background-size", "background-origin", "background-clip",
+    };
+
     private static void ExpandBackgroundShorthand(Dictionary<string, string> computed, string value)
     {
+        // CSS Cascade §7.3: a CSS-wide keyword as the sole shorthand value sets every longhand it
+        // controls to that keyword — e.g. `background: inherit` means `background-color: inherit`,
+        // `background-image: inherit`, … . The per-layer parser below would otherwise skip the
+        // keyword (see the `inherit`/`auto` branch) and leave background-color at its initial
+        // `transparent`, so an author `background: inherit` never inherited the parent's colour.
+        // Kept verbatim like a longhand CSS-wide keyword; the renderer resolves it against the parent.
+        var whole = value.Trim().ToLowerInvariant();
+        if (whole is "inherit" or "initial" or "unset" or "revert")
+        {
+            foreach (var longhand in BackgroundLonghandProperties)
+                if (!computed.ContainsKey(longhand))
+                    computed[longhand] = whole;
+            return;
+        }
+
         var layers = SplitOnTopLevelCommas(value);
         if (layers.Count == 0)
             return;
