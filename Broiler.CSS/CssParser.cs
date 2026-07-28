@@ -22,7 +22,12 @@ public sealed class CssParser
         return ParseDeclarationBlock(source ?? string.Empty, 0);
     }
 
-    private List<CssRule> ParseRules(string text, int sourceOffset)
+    // <paramref name="parentSelector"/> is set when these rules are the body of an
+    // enclosing style rule (CSS Nesting Level 1) — either a directly nested rule or one
+    // inside a nested conditional group (@media/@supports/...). Each style rule's selector
+    // is then desugared against the parent (§"nest-desugaring"); at the top level it is
+    // <see langword="null"/> and selectors are absolute.
+    private List<CssRule> ParseRules(string text, int sourceOffset, string? parentSelector = null)
     {
         var rules = new List<CssRule>();
         var position = 0;
@@ -35,7 +40,7 @@ public sealed class CssParser
             var ruleStart = position;
             if (text[position] == '@')
             {
-                rules.Add(ParseAtRule(text, ref position, sourceOffset));
+                rules.Add(ParseAtRule(text, ref position, sourceOffset, parentSelector));
                 continue;
             }
 
@@ -52,6 +57,13 @@ public sealed class CssParser
             }
 
             var selectorText = CssSyntax.RemoveComments(text[position..Index]).Trim();
+            // CSS Nesting §: a rule nested in a parent style rule (or in a conditional group
+            // inside one) has its selector desugared relative to the parent. Top-level rules
+            // (parentSelector == null) keep their absolute selector.
+            var effectiveSelector = parentSelector is null
+                ? selectorText
+                : DesugarNestedSelector(selectorText, parentSelector);
+
             var close = FindClosingBrace(text, Index);
             if (close < 0)
             {
@@ -66,17 +78,22 @@ public sealed class CssParser
 
             var blockStart = Index + 1;
             var blockLength = Math.Max(0, close - blockStart);
-            var declarations = ParseDeclarationBlock(text.Substring(blockStart, blockLength), sourceOffset + blockStart);
+            var (declarations, nestedRules) = ParseStyleRuleBlock(
+                text.Substring(blockStart, blockLength), sourceOffset + blockStart, effectiveSelector);
             rules.Add(new CssStyleRule(
-                CssSelectorParser.Parse(selectorText),
+                CssSelectorParser.Parse(effectiveSelector),
                 declarations,
                 new CssSourceRange(sourceOffset + ruleStart, close - ruleStart + 1)));
+            // CSS Nesting §: nested rules desugar to independent flattened rules placed
+            // immediately after their parent, so the cascade's document-order tie-break keeps
+            // a nested declaration winning over an equally-specific one in the parent block.
+            rules.AddRange(nestedRules);
             position = close + 1;
         }
         return rules;
     }
 
-    private CssAtRule ParseAtRule(string text, ref int position, int sourceOffset)
+    private CssAtRule ParseAtRule(string text, ref int position, int sourceOffset, string? parentSelector = null)
     {
         var start = position++;
         var nameStart = position;
@@ -139,7 +156,10 @@ public sealed class CssParser
         if (name is "font-face" or "page" or "property" or "counter-style" or "font-palette-values")
             declarations = ParseDeclarationBlock(blockText, sourceOffset + blockStart);
         else if (name is "media" or "supports" or "layer" or "container" or "scope" or "starting-style" or "keyframes" or "-webkit-keyframes")
-            nestedRules = ParseRules(blockText, sourceOffset + blockStart);
+            // CSS Nesting §: a conditional group nested in a style rule carries the parent
+            // selector down so its inner rules desugar against it (keyframes' percentage
+            // selectors have no parent, so parentSelector stays inert there).
+            nestedRules = ParseRules(blockText, sourceOffset + blockStart, parentSelector);
 
         position = close + 1;
         return new CssAtRule(
@@ -157,51 +177,232 @@ public sealed class CssParser
         var declarationStart = 0;
         foreach (var part in CssSyntax.SplitTopLevel(text, ';'))
         {
-            var raw = part;
-            var leading = raw.Length - raw.TrimStart().Length;
-            var trimmed = CssSyntax.RemoveComments(raw).Trim();
-            if (trimmed.Length == 0)
-            {
-                declarationStart += raw.Length + 1;
-                continue;
-            }
-
-            var colon = FindTopLevelColon(trimmed);
-            if (colon <= 0)
-            {
-                AddDiagnostic(
-                    "CSS2001",
-                    "Malformed declaration was ignored.",
-                    CssDiagnosticSeverity.Warning,
-                    sourceOffset + declarationStart + leading,
-                    trimmed.Length);
-                declarationStart += raw.Length + 1;
-                continue;
-            }
-
-            var name = trimmed[..colon].Trim();
-            var valueText = trimmed[(colon + 1)..].Trim();
-            var important = TryRemoveImportant(ref valueText);
-            if (!IsValidPropertyName(name) || valueText.Length == 0)
-            {
-                AddDiagnostic(
-                    "CSS2002",
-                    "Declaration has an invalid property name or empty value.",
-                    CssDiagnosticSeverity.Warning,
-                    sourceOffset + declarationStart + leading,
-                    trimmed.Length);
-                declarationStart += raw.Length + 1;
-                continue;
-            }
-
-            declarations.Add(new CssDeclaration(
-                name.StartsWith("--", StringComparison.Ordinal) ? name : name.ToLowerInvariant(),
-                CssValueParser.Parse(valueText),
-                important
-                ));
-            declarationStart += raw.Length + 1;
+            AddDeclarationFromSegment(part, sourceOffset + declarationStart, declarations);
+            declarationStart += part.Length + 1;
         }
         return new CssDeclarationBlock(declarations);
+    }
+
+    // Parses one `name: value` segment (as produced by splitting a declaration block on
+    // top-level `;`), appending a valid declaration or recording a diagnostic. Shared by the
+    // flat declaration-block path and the nesting-aware style-rule-block path below.
+    private void AddDeclarationFromSegment(string raw, int segmentOffset, List<CssDeclaration> declarations)
+    {
+        var leading = raw.Length - raw.TrimStart().Length;
+        var trimmed = CssSyntax.RemoveComments(raw).Trim();
+        if (trimmed.Length == 0)
+            return;
+
+        var colon = FindTopLevelColon(trimmed);
+        if (colon <= 0)
+        {
+            AddDiagnostic(
+                "CSS2001",
+                "Malformed declaration was ignored.",
+                CssDiagnosticSeverity.Warning,
+                segmentOffset + leading,
+                trimmed.Length);
+            return;
+        }
+
+        var name = trimmed[..colon].Trim();
+        var valueText = trimmed[(colon + 1)..].Trim();
+        var important = TryRemoveImportant(ref valueText);
+        if (!IsValidPropertyName(name) || valueText.Length == 0)
+        {
+            AddDiagnostic(
+                "CSS2002",
+                "Declaration has an invalid property name or empty value.",
+                CssDiagnosticSeverity.Warning,
+                segmentOffset + leading,
+                trimmed.Length);
+            return;
+        }
+
+        declarations.Add(new CssDeclaration(
+            name.StartsWith("--", StringComparison.Ordinal) ? name : name.ToLowerInvariant(),
+            CssValueParser.Parse(valueText),
+            important
+            ));
+    }
+
+    // CSS Nesting Level 1: the body of a style rule may interleave declarations with nested
+    // style rules and nested conditional groups (@media/@supports/...). Walks the block at top
+    // level, returning the parent's own declarations plus the flattened, selector-desugared
+    // nested rules (in source order). <paramref name="parentSelector"/> is the enclosing rule's
+    // already-absolute selector, used to desugar each nested selector.
+    private (CssDeclarationBlock Declarations, List<CssRule> NestedRules) ParseStyleRuleBlock(
+        string text, int sourceOffset, string parentSelector)
+    {
+        var declarations = new List<CssDeclaration>();
+        var nestedRules = new List<CssRule>();
+        var position = 0;
+
+        while (position < text.Length)
+        {
+            SkipTrivia(text, ref position);
+            if (position >= text.Length)
+                break;
+
+            // Nested conditional group / at-rule (e.g. `@media (...) { ... }`) — parse it with
+            // the parent selector so its inner rules desugar, and flatten it out as a sibling.
+            if (text[position] == '@')
+            {
+                nestedRules.Add(ParseAtRule(text, ref position, sourceOffset, parentSelector));
+                continue;
+            }
+
+            var (delimiterIndex, delimiter) = FindTopLevelDelimiter(text, position, '{', ';');
+
+            // No further `{` or `;`: the remainder is a trailing declaration with no semicolon.
+            if (delimiterIndex < 0)
+            {
+                AddDeclarationFromSegment(text[position..], sourceOffset + position, declarations);
+                break;
+            }
+
+            // A `;` before any `{` closes a declaration belonging to the parent rule.
+            if (delimiter == ';')
+            {
+                AddDeclarationFromSegment(text[position..delimiterIndex], sourceOffset + position, declarations);
+                position = delimiterIndex + 1;
+                continue;
+            }
+
+            // A `{` first: this segment is a nested style rule. Its prelude is the nested
+            // selector list; desugar it against the parent and recurse into its block.
+            var prelude = CssSyntax.RemoveComments(text[position..delimiterIndex]).Trim();
+            var ruleStart = position;
+            var close = FindClosingBrace(text, delimiterIndex);
+            if (close < 0)
+            {
+                AddDiagnostic(
+                    "CSS1002",
+                    "Unterminated nested style rule.",
+                    CssDiagnosticSeverity.Error,
+                    sourceOffset + ruleStart,
+                    text.Length - ruleStart);
+                close = text.Length - 1;
+            }
+
+            if (prelude.Length == 0)
+            {
+                // Empty prelude (e.g. a stray `{ ... }`): skip the block rather than emit an
+                // all-matching rule.
+                position = close + 1;
+                continue;
+            }
+
+            var nestedSelector = DesugarNestedSelector(prelude, parentSelector);
+            var blockStart = delimiterIndex + 1;
+            var blockLength = Math.Max(0, close - blockStart);
+            var (childDeclarations, childNested) = ParseStyleRuleBlock(
+                text.Substring(blockStart, blockLength), sourceOffset + blockStart, nestedSelector);
+
+            nestedRules.Add(new CssStyleRule(
+                CssSelectorParser.Parse(nestedSelector),
+                childDeclarations,
+                new CssSourceRange(sourceOffset + ruleStart, close - ruleStart + 1)));
+            nestedRules.AddRange(childNested);
+            position = close + 1;
+        }
+
+        return (new CssDeclarationBlock(declarations), nestedRules);
+    }
+
+    // CSS Nesting Level 1 §"nest-desugaring": rewrites a nested selector list so it is absolute
+    // with respect to <paramref name="parentSelector"/>. Each nested complex selector that
+    // contains the nesting selector `&` has it replaced by the parent; one that does not is
+    // treated as relative and gets the parent prepended with a descendant combinator (so
+    // `.child` under `.parent` becomes `.parent .child`, and `> .child` becomes
+    // `.parent > .child`). A multi-selector parent is wrapped in `:is(...)` so it acts as one
+    // unit and keeps its combined specificity.
+    private static string DesugarNestedSelector(string nestedSelectorList, string parentSelector)
+    {
+        var parent = parentSelector.Trim();
+        var parentIsList = CountTopLevel(parent, ',') > 0;
+        var parentRef = parentIsList ? $":is({parent})" : parent;
+
+        var builder = new System.Text.StringBuilder();
+        var first = true;
+        foreach (var candidate in CssSyntax.SplitTopLevel(nestedSelectorList, ','))
+        {
+            var nested = candidate.Trim();
+            if (nested.Length == 0)
+                continue;
+            if (!first)
+                builder.Append(", ");
+            first = false;
+            builder.Append(ContainsNestingSelector(nested)
+                ? SubstituteNestingSelector(nested, parentRef)
+                : $"{parentRef} {nested}");
+        }
+
+        return builder.ToString();
+    }
+
+    // Whether the selector contains a top-level `&` nesting selector (ignoring any that appear
+    // inside a quoted string, e.g. an attribute value).
+    private static bool ContainsNestingSelector(string selector)
+    {
+        char quote = '\0';
+        for (var index = 0; index < selector.Length; index++)
+        {
+            var character = selector[index];
+            if (quote != '\0')
+            {
+                if (character == '\\')
+                    index++;
+                else if (character == quote)
+                    quote = '\0';
+                continue;
+            }
+            if (character is '"' or '\'')
+                quote = character;
+            else if (character == '&')
+                return true;
+        }
+        return false;
+    }
+
+    // Replaces every `&` nesting selector (outside quoted strings) with the parent reference.
+    private static string SubstituteNestingSelector(string selector, string parentRef)
+    {
+        var builder = new System.Text.StringBuilder(selector.Length + parentRef.Length);
+        char quote = '\0';
+        for (var index = 0; index < selector.Length; index++)
+        {
+            var character = selector[index];
+            if (quote != '\0')
+            {
+                builder.Append(character);
+                if (character == '\\' && index + 1 < selector.Length)
+                    builder.Append(selector[++index]);
+                else if (character == quote)
+                    quote = '\0';
+                continue;
+            }
+            if (character is '"' or '\'')
+            {
+                quote = character;
+                builder.Append(character);
+            }
+            else if (character == '&')
+                builder.Append(parentRef);
+            else
+                builder.Append(character);
+        }
+        return builder.ToString();
+    }
+
+    // Counts occurrences of a separator at the top level (outside parens/brackets/quotes),
+    // used to detect a comma-separated parent selector list.
+    private static int CountTopLevel(string text, char separator)
+    {
+        var count = 0;
+        foreach (var _ in CssSyntax.SplitTopLevel(text, separator))
+            count++;
+        return count - 1;
     }
 
     private static (int Index, char Character) FindTopLevelDelimiter(string text, int start, params char[] delimiters)
