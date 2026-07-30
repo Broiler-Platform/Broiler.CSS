@@ -158,9 +158,21 @@ public sealed partial class CssStyleEngine
 
     // ---- Condition evaluation ---------------------------------------------
 
+    /// <summary>
+    /// Bounds <c>@container</c> condition nesting. Every recursion step consumes at least one
+    /// character of the prelude, so no real query comes close to this; the cap exists because a
+    /// .NET stack overflow cannot be caught and kills the process outright, so a future grammar gap
+    /// must degrade to "query false" (the rule is dropped) rather than take the host down.
+    /// </summary>
+    private const int MaxContainerConditionDepth = 32;
+
     private bool EvaluateContainerCondition(
-        string condition, double? inlineSize, double? blockSize, DomElement? styleContainer)
+        string condition, double? inlineSize, double? blockSize, DomElement? styleContainer,
+        int depth = 0)
     {
+        if (depth > MaxContainerConditionDepth)
+            return false;
+
         var tokens = TokenizeContainerCondition(condition);
         if (tokens.Count == 0)
             return false;
@@ -183,7 +195,7 @@ public sealed partial class CssStyleEngine
                 continue;
             }
 
-            var value = EvaluateContainerGroup(token, inlineSize, blockSize, styleContainer);
+            var value = EvaluateContainerGroup(token, inlineSize, blockSize, styleContainer, depth);
             if (negateNext)
             {
                 value = !value;
@@ -270,7 +282,7 @@ public sealed partial class CssStyleEngine
     }
 
     private bool EvaluateContainerGroup(
-        string group, double? inlineSize, double? blockSize, DomElement? styleContainer)
+        string group, double? inlineSize, double? blockSize, DomElement? styleContainer, int depth)
     {
         var inner = group.Trim();
 
@@ -279,18 +291,126 @@ public sealed partial class CssStyleEngine
         if (TryReadStyleFeature(inner, out var styleFeature))
             return EvaluateStyleFeature(styleFeature, styleContainer);
 
-        if (inner.StartsWith('(') && inner.EndsWith(')'))
-            inner = inner[1..^1].Trim();
+        // Any other lone query function — anchored(), scroll-state(), a future one — is
+        // <general-enclosed> in css-conditional-5 and evaluates false, exactly like an unsupported
+        // feature. It has to be answered here rather than treated as nesting: its argument list is
+        // parenthesised but is not a container condition, so recursing re-tokenized the identical
+        // single token forever.
+        if (IsFunctionToken(inner))
+            return false;
+
+        if (TryUnwrapGroup(inner, out var unwrapped))
+            inner = unwrapped;
 
         if (TryReadStyleFeature(inner, out styleFeature))
             return EvaluateStyleFeature(styleFeature, styleContainer);
 
-        // A nested query (further parentheses, or an and/or/not combination) recurses; otherwise this
-        // is a single size feature.
-        if (inner.Contains('('))
-            return EvaluateContainerCondition(inner, inlineSize, blockSize, styleContainer);
+        if (IsFunctionToken(inner))
+            return false;
+
+        // A nested query (a parenthesised group, or an and/or/not combination) recurses; otherwise
+        // this is a single size feature.
+        if (IsNestedCondition(inner))
+            return EvaluateContainerCondition(inner, inlineSize, blockSize, styleContainer, depth + 1);
 
         return EvaluateSizeFeature(inner, inlineSize, blockSize);
+    }
+
+    /// <summary>
+    /// Distinguishes a nested <c>&lt;container-condition&gt;</c> from a single
+    /// <c>&lt;size-feature&gt;</c>, given a <c>&lt;query-in-parens&gt;</c> whose wrapping
+    /// parentheses have been removed. A condition either opens another group or joins groups with a
+    /// top-level <c>and</c>/<c>or</c>/<c>not</c>; a size feature does neither. Testing for a bare
+    /// <c>(</c> instead misread the value function in <c>width = calc(100px + 10rem)</c> as
+    /// nesting, and re-tokenizing that produced the same token at every level — an unbounded
+    /// recursion that took the process down with it.
+    /// </summary>
+    private static bool IsNestedCondition(string inner)
+    {
+        // A leading '(' that never closes is malformed, not nesting. Recursing on it would hand the
+        // same unbalanced text back to the tokenizer unchanged; treating it as a size feature makes
+        // the query false, which is how every other unparsable prelude already behaves.
+        if (inner.StartsWith('(') && MatchParen(inner, 0) > 0)
+            return true;
+
+        foreach (var token in TokenizeContainerCondition(inner))
+        {
+            if (IsCombinator(token))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsCombinator(string token) =>
+        token.Equals("and", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("or", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("not", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Strips the parentheses of a <c>( … )</c> group, or reports false when
+    /// <paramref name="text"/> is not one — including when a leading <c>(</c> is closed before the
+    /// end, as in <c>(width) and (height)</c>, where stripping both ends would splice two groups
+    /// into one malformed condition.</summary>
+    private static bool TryUnwrapGroup(string text, out string inner)
+    {
+        inner = string.Empty;
+        if (text.Length == 0 || text[0] != '(' || MatchParen(text, 0) != text.Length)
+            return false;
+
+        inner = text[1..^1].Trim();
+        return true;
+    }
+
+    /// <summary>True when <paramref name="text"/> is exactly one function token — an identifier
+    /// followed by a parenthesised argument list that closes at the end of the string.</summary>
+    private static bool IsFunctionToken(string text) => TryReadFunction(text, out _, out _);
+
+    /// <summary>Reads a whole-string <c>name(args)</c> function token.</summary>
+    private static bool TryReadFunction(string text, out string name, out string arguments)
+    {
+        name = string.Empty;
+        arguments = string.Empty;
+
+        var i = 0;
+        while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] is '-' or '_'))
+            i++;
+        if (i == 0)
+            return false;
+
+        // `not (width > 0px)` is a negated group, not a call to a function named `not` — the
+        // combinators are keywords and can never open an argument list.
+        var end = i;
+        if (IsCombinator(text[..end]))
+            return false;
+
+        while (i < text.Length && char.IsWhiteSpace(text[i]))
+            i++;
+        if (i >= text.Length || text[i] != '(' || MatchParen(text, i) != text.Length)
+            return false;
+
+        name = text[..end];
+        arguments = text[(i + 1)..^1].Trim();
+        return true;
+    }
+
+    /// <summary>Returns the index just past the <c>)</c> closing the <c>(</c> at
+    /// <paramref name="open"/>, or <c>-1</c> when the parentheses never balance.</summary>
+    private static int MatchParen(string text, int open)
+    {
+        var depth = 0;
+        for (var i = open; i < text.Length; i++)
+        {
+            if (text[i] == '(')
+            {
+                depth++;
+            }
+            else if (text[i] == ')' && --depth == 0)
+            {
+                return i + 1;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>Reads the body of a <c>style(...)</c> query, or reports false when
@@ -298,17 +418,11 @@ public sealed partial class CssStyleEngine
     private static bool TryReadStyleFeature(string group, out string feature)
     {
         feature = string.Empty;
-        const string Name = "style";
-        if (!group.StartsWith(Name, StringComparison.OrdinalIgnoreCase))
+        if (!TryReadFunction(group, out var name, out var arguments) ||
+            !name.Equals("style", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        var i = Name.Length;
-        while (i < group.Length && char.IsWhiteSpace(group[i]))
-            i++;
-        if (i >= group.Length || group[i] != '(' || !group.EndsWith(')'))
-            return false;
-
-        feature = group[(i + 1)..^1].Trim();
+        feature = arguments;
         return feature.Length > 0;
     }
 

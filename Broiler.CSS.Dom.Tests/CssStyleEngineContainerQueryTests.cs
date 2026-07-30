@@ -278,4 +278,103 @@ public sealed class CssStyleEngineContainerQueryTests
 
         Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
     }
+
+    // ──────── parentheses that are not nesting (WPT issue #1497, problem 1) ────────
+    // Every '(' used to be read as a nested condition, so a value function or an unsupported query
+    // function re-tokenized to the identical single token at every level. That recursion had no
+    // base case, and a .NET stack overflow cannot be caught: it killed the WPT worker outright,
+    // which is why one bug gated 68 tests. These cases must terminate — reaching the assertion at
+    // all is the substance of the guard.
+
+    [Fact]
+    public void Value_Function_In_A_Range_Feature_Does_Not_Recurse()
+    {
+        var (engine, target) = BuildScoped(
+            "div { color: rgb(9, 9, 9); } " +
+            "@container (width = calc(100px + 10rem)) { div { color: rgb(1, 2, 3); } }",
+            "size", "width: 200px; height: 50px;");
+
+        // calc() arithmetic is not resolved without layout, so the bound is unknown → query false.
+        Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
+    }
+
+    [Fact]
+    public void Value_Function_In_A_Colon_Feature_Does_Not_Recurse()
+    {
+        var (engine, target) = BuildScoped(
+            "div { color: rgb(9, 9, 9); } " +
+            "@container (width: calc(1em + 80px)) { div { color: rgb(1, 2, 3); } }",
+            "inline-size", "width: 100px;");
+
+        Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
+    }
+
+    // anchored()/scroll-state() are <general-enclosed>: unsupported, so false — never nesting.
+    [Theory]
+    [InlineData("anchored(fallback: --foo)")]
+    [InlineData("anchored(fallback: flip-block flip-inline)")]
+    [InlineData("scroll-state(scrollable: block-end)")]
+    [InlineData("scroll-state((stuck: top) or (snapped: block))")]
+    public void Unsupported_Query_Function_Does_Not_Apply(string query)
+    {
+        var (engine, target) = BuildScoped(
+            $"div {{ color: rgb(9, 9, 9); }} @container {query} {{ div {{ color: rgb(1, 2, 3); }} }}",
+            "size", "width: 100px; height: 100px;");
+
+        Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
+    }
+
+    // A '(' that never closes is malformed, not nesting; it must degrade to "not applied".
+    [Fact]
+    public void Unbalanced_Prelude_Does_Not_Apply()
+    {
+        var (engine, target) = BuildScoped(
+            "div { color: rgb(9, 9, 9); } @container ((min-width: 1px) { div { color: rgb(1, 2, 3); } }",
+            "inline-size", "width: 100px;");
+
+        Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
+    }
+
+    // ──────── genuine nesting still recurses ────────
+
+    [Theory]
+    [InlineData("((min-width: 50px) and (max-width: 150px))", true)]
+    [InlineData("((min-width: 50px) and (max-width: 80px))", false)]
+    [InlineData("((min-width: 500px) or (max-width: 150px))", true)]
+    [InlineData("((min-width: 500px) or (min-width: 400px))", false)]
+    [InlineData("(not (min-width: 500px))", true)]
+    [InlineData("(not (min-width: 50px))", false)]
+    [InlineData("((min-width: 50px))", true)]
+    [InlineData("(((((min-width: 50px)))))", true)]
+    public void Nested_Conditions_Still_Evaluate(string query, bool applies)
+    {
+        var (engine, target) = BuildScoped(
+            $"div {{ color: rgb(9, 9, 9); }} @container {query} {{ div {{ color: rgb(1, 2, 3); }} }}",
+            "size", "width: 100px; height: 100px;");
+
+        Assert.Equal(applies ? "rgb(1, 2, 3)" : "rgb(9, 9, 9)", ColorOf(engine, target));
+    }
+
+    // A style() query grouped with a size query: the group's own parentheses are nesting, but
+    // style()'s are its argument list. Matching them by balance rather than by the last character
+    // is what keeps the two apart.
+    [Fact]
+    public void Style_Query_Combined_With_A_Size_Query_Evaluates_Both_Halves()
+    {
+        var document = new DomDocument();
+        var html = document.CreateElement("html");
+        var container = document.CreateElement("div");
+        container.SetAttribute("style", "container-type: size; width: 100px; height: 100px; --flag: on;");
+        var target = document.CreateElement("div");
+        document.AppendChild(html);
+        html.AppendChild(container);
+        container.AppendChild(target);
+
+        var engine = new CssStyleEngine();
+        engine.AddStyleSheet(new CssParser().ParseStyleSheet(
+            "div { color: rgb(9, 9, 9); } " +
+            "@container (style(--flag: on) and (min-width: 50px)) { div { color: rgb(1, 2, 3); } }"));
+
+        Assert.Equal("rgb(1, 2, 3)", engine.GetComputedStyle(target).GetPropertyValue("color"));
+    }
 }
