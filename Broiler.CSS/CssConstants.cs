@@ -137,6 +137,20 @@ public static class CssConstants
     /// <summary>Viewport-max unit: 1vmax = 1% of the larger viewport dimension.</summary>
     public const string Vmax = "vmax";
 
+    /// <summary>
+    /// Logical viewport-block unit: 1vb = 1% of the initial containing block in
+    /// the direction of the <em>root element's block axis</em> — so vh under a
+    /// horizontal writing mode and vw under a vertical one.
+    /// </summary>
+    public const string Vb = "vb";
+
+    /// <summary>
+    /// Logical viewport-inline unit: 1vi = 1% of the initial containing block in
+    /// the direction of the <em>root element's inline axis</em> — so vw under a
+    /// horizontal writing mode and vh under a vertical one.
+    /// </summary>
+    public const string Vi = "vi";
+
     /// <summary>Quarter-millimeter: 1Q = 1/40 cm ≈ 0.945 px at 96 dpi.</summary>
     public const string Q = "q";
     /// <summary>

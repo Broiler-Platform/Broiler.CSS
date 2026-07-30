@@ -32,6 +32,10 @@ public enum CssUnit
     Vh,
     Vmin,
     Vmax,
+    // CSS Values 4 §6.1.4: the logical viewport units, resolved against the
+    // root element's writing mode (vi = inline axis, vb = block axis).
+    Vi,
+    Vb,
     Cm,
     Mm,
     Q,

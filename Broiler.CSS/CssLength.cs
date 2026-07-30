@@ -43,7 +43,7 @@ public sealed class CssLength
         // Detect the trailing unit via the shared CssLengthParser scanner, then
         // project the token onto CssUnit. Units the legacy
         // CssLength never recognized (lh/rlh/Q) map to an error, preserving behavior.
-        string unit = CssLengthParser.GetUnit(length, null, out bool hasUnit);
+        string unit = CssLengthParser.GetUnit(length, null, out bool hasUnit, out int unitLength);
         if (!hasUnit || !TryMapUnit(unit, out CssUnit cssUnit, out bool isRelative))
         {
             HasError = true;
@@ -53,7 +53,10 @@ public sealed class CssLength
         Unit = cssUnit;
         IsRelative = isRelative;
 
-        string number = length[..^unit.Length];
+        // Trim by the unit AS WRITTEN, not by the canonical spelling: the
+        // small/large/dynamic viewport variants canonicalise to something shorter
+        // (svmin → vmin), so unit.Length would leave the prefix on the number.
+        string number = length[..^unitLength];
         if (!double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number))
             HasError = true;
     }
@@ -78,6 +81,10 @@ public sealed class CssLength
             CssConstants.Vw => (CssUnit.Vw, true),
             CssConstants.Vmin => (CssUnit.Vmin, true),
             CssConstants.Vmax => (CssUnit.Vmax, true),
+            // CSS Values 4 §6.1.4: the logical viewport units. GetUnit reports the
+            // sv*/lv*/dv* variants under these canonical spellings.
+            CssConstants.Vi => (CssUnit.Vi, true),
+            CssConstants.Vb => (CssUnit.Vb, true),
             CssConstants.Mm => (CssUnit.Mm, false),
             CssConstants.Cm => (CssUnit.Cm, false),
             CssConstants.In => (CssUnit.In, false),
@@ -180,6 +187,12 @@ public sealed class CssLength
                     break;
                 case CssUnit.Vmax:
                     u = "vmax";
+                    break;
+                case CssUnit.Vi:
+                    u = "vi";
+                    break;
+                case CssUnit.Vb:
+                    u = "vb";
                     break;
             }
 

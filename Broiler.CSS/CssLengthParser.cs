@@ -8,7 +8,7 @@ namespace Broiler.CSS;
 /// Shared static CSS length and number resolution used by the layout engine
 /// (<c>ParseLength</c>, <c>ParseNumber</c>, <c>IsValidLength</c>, and
 /// <c>GetActualBorderWidth</c>).
-/// Viewport-relative units depend on <see cref="SetViewportSize"/> being called
+/// Viewport-relative units depend on <see cref="SetViewportSize(float, float, string)"/> being called
 /// per layout pass, mirroring the renderer.
 /// </summary>
 public static class CssLengthParser
@@ -30,6 +30,22 @@ public static class CssLengthParser
     /// <summary>Pre-computed factor for 1vmax (max dimension / 100).</summary>
     [ThreadStatic]
     private static double _vmaxFactor;
+
+    /// <summary>
+    /// Pre-computed factor for 1vi — 1% of the initial containing block along the
+    /// root element's <em>inline</em> axis. Set by <see cref="SetViewportSize(float, float, string)"/>;
+    /// equal to <see cref="_vwFactor"/> in a horizontal writing mode.
+    /// </summary>
+    [ThreadStatic]
+    private static double _viFactor;
+
+    /// <summary>
+    /// Pre-computed factor for 1vb — 1% of the initial containing block along the
+    /// root element's <em>block</em> axis. Set by <see cref="SetViewportSize(float, float, string)"/>;
+    /// equal to <see cref="_vhFactor"/> in a horizontal writing mode.
+    /// </summary>
+    [ThreadStatic]
+    private static double _vbFactor;
 
     /// <summary>
     /// Element <c>zoom</c> factor applied to <em>absolute</em> used lengths
@@ -60,14 +76,47 @@ public static class CssLengthParser
 
     /// <summary>
     /// Sets the viewport dimensions used by <see cref="ParseLength"/> to
-    /// resolve CSS viewport-relative units.
+    /// resolve CSS viewport-relative units, assuming a horizontal writing mode
+    /// for the logical units (<c>vi</c>/<c>vb</c>).
     /// </summary>
-    public static void SetViewportSize(float width, float height)
+    public static void SetViewportSize(float width, float height) =>
+        SetViewportSize(width, height, rootWritingMode: null);
+
+    /// <summary>
+    /// Sets the viewport dimensions used by <see cref="ParseLength"/> to resolve
+    /// CSS viewport-relative units, mapping the logical units against
+    /// <paramref name="rootWritingMode"/>.
+    /// <para>
+    /// CSS Values 4 §6.1.4 defines <c>vi</c>/<c>vb</c> against the <em>root
+    /// element's</em> inline/block axis — not the axis of the element the unit
+    /// appears on — so a per-pass factor is the right granularity. Under a
+    /// vertical writing mode the axes swap: the inline axis runs down the page
+    /// (so 1vi is 1% of the viewport height) and the block axis runs across it.
+    /// </para>
+    /// <para>
+    /// DIAGNOSTIC NOTE (WPT issue #1491, problem 30): before <c>vb</c> resolved,
+    /// <c>page-box-008-print.html</c>'s <c>block-size: 100vb</c> box got no size
+    /// at all, so the test rendered 99% hotpink body background where Chromium
+    /// renders 99% yellow.
+    /// </para>
+    /// </summary>
+    public static void SetViewportSize(float width, float height, string? rootWritingMode)
     {
         _vwFactor = width * 0.01;
         _vhFactor = height * 0.01;
         _vminFactor = Math.Min(width, height) * 0.01;
         _vmaxFactor = Math.Max(width, height) * 0.01;
+
+        if (CssWritingMode.IsVertical(rootWritingMode))
+        {
+            _viFactor = _vhFactor;
+            _vbFactor = _vwFactor;
+        }
+        else
+        {
+            _viFactor = _vwFactor;
+            _vbFactor = _vhFactor;
+        }
     }
 
     /// <summary>
@@ -132,12 +181,13 @@ public static class CssLengthParser
         {
             number = value[..^3];
         }
-        // CSS Values 3 §5.1.2: 4-character viewport units (vmin, vmax)
-        else if (value.Length > 4 &&
-                 (value.EndsWith(CssConstants.Vmin, StringComparison.OrdinalIgnoreCase) ||
-                  value.EndsWith(CssConstants.Vmax, StringComparison.OrdinalIgnoreCase)))
+        // CSS Values 3 §5.1.2 / Values 4 §6.1: the viewport units.
+        // TryScanTrailingViewportUnit is the single scanner for the whole family
+        // (physical, logical, and the small/large/dynamic variants), so validity
+        // keys off it rather than re-listing the spellings here.
+        else if (TryScanTrailingViewportUnit(value, out _, out var viewportUnitLength))
         {
-            number = value[..^4];
+            number = value[..^viewportUnitLength];
         }
         else if (value.Length > 2)
         {
@@ -223,12 +273,11 @@ public static class CssLengthParser
             return ParseNumber(length, hundredPercent);
 
         //Get units of the length
-        string unit = GetUnit(length, defaultUnit, out bool hasUnit);
+        string unit = GetUnit(length, defaultUnit, out bool hasUnit, out int unitLen);
 
-        //Number of the length
-        int unitLen = unit == CssConstants.Rem || unit == CssConstants.Rlh ? 3 :
-                      unit == CssConstants.Vmin || unit == CssConstants.Vmax ? 4 :
-                      unit == CssConstants.Q ? 1 : 2;
+        // Number of the length. Trim by the unit AS WRITTEN: the small/large/
+        // dynamic viewport variants canonicalise to a shorter spelling
+        // (svmin → vmin), so unit.Length would leave the prefix on the number.
         string number = hasUnit
             ? length[..^unitLen]
             : length;
@@ -281,8 +330,81 @@ public static class CssLengthParser
         CssConstants.Vw => _vwFactor,
         CssConstants.Vmin => _vminFactor,
         CssConstants.Vmax => _vmaxFactor,
+        // CSS Values 4 §6.1.4: the logical viewport units. GetUnit canonicalises
+        // the small/large/dynamic variants (svb, lvb, dvb, …) onto these, so the
+        // table stays six entries wide.
+        CssConstants.Vi => _viFactor,
+        CssConstants.Vb => _vbFactor,
         _ => double.NaN,
     };
+
+    /// <summary>
+    /// Maps a viewport-unit token onto its canonical default-viewport spelling,
+    /// or returns <see langword="null"/> when the token is not a viewport unit.
+    /// <para>
+    /// CSS Values 4 §6.1.2–6.1.4 defines four viewport sizes — default, small
+    /// (<c>sv*</c>), large (<c>lv*</c>) and dynamic (<c>dv*</c>) — which differ
+    /// only when retractable UA chrome overlaps the viewport. Broiler renders
+    /// headless into a fixed surface with no such chrome, so all four coincide
+    /// and the variants collapse onto the default spelling. That keeps one
+    /// factor per axis rather than four identical copies; if a UA with dynamic
+    /// chrome ever appears, this is the single place that has to split.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Viewport-unit spellings by character count, longest first — the scan order
+    /// <see cref="TryScanTrailingViewportUnit"/> walks. Static so the hot length
+    /// path does not allocate per call.
+    /// </summary>
+    private static readonly int[] ViewportUnitLengths = [5, 4, 3, 2];
+
+    private static string? CanonicalViewportUnit(string unit)
+    {
+        var lower = unit.ToLowerInvariant();
+
+        // Strip the small/large/dynamic viewport prefix, if any.
+        if (lower.Length >= 3 && (lower[0] is 's' or 'l' or 'd') && lower[1] == 'v')
+            lower = lower[1..];
+
+        return lower switch
+        {
+            CssConstants.Vw or CssConstants.Vh or CssConstants.Vmin or
+            CssConstants.Vmax or CssConstants.Vi or CssConstants.Vb => lower,
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Scans <paramref name="length"/> for a trailing viewport unit, longest
+    /// spelling first so <c>svmin</c> is not read as a stray <c>s</c> followed by
+    /// <c>vmin</c>. Reports the canonical default-viewport spelling
+    /// (<paramref name="canonical"/>) and how many characters the written unit
+    /// occupied (<paramref name="tokenLength"/>) — the two differ for the
+    /// small/large/dynamic variants. Every candidate leaves at least one
+    /// character of number ahead of the unit, so a bare unit is not a length.
+    /// </summary>
+    private static bool TryScanTrailingViewportUnit(string length, out string canonical, out int tokenLength)
+    {
+        // 5: svmin/svmax/lvmin/lvmax/dvmin/dvmax · 4: vmin/vmax
+        // 3: svw/svh/svi/svb and lv*/dv* peers   · 2: vw/vh/vi/vb
+
+        foreach (var candidate in ViewportUnitLengths)
+        {
+            if (length.Length <= candidate)
+                continue;
+
+            if (CanonicalViewportUnit(length[^candidate..]) is { } match)
+            {
+                canonical = match;
+                tokenLength = candidate;
+                return true;
+            }
+        }
+
+        canonical = string.Empty;
+        tokenLength = 0;
+        return false;
+    }
 
     private static bool TryEvaluateLengthExpression(string expression, double hundredPercent, double emFactor,
         string defaultUnit, bool fontAdjust, bool returnPoints, double lineHeightFactor,
@@ -468,7 +590,7 @@ public static class CssLengthParser
             return true;
         }
 
-        string unit = GetUnit(value, defaultUnit, out bool hasUnit);
+        string unit = GetUnit(value, defaultUnit, out bool hasUnit, out int unitLen);
         if (!hasUnit)
         {
             if (insideMathFunction)
@@ -483,9 +605,9 @@ public static class CssLengthParser
             return false;
         }
 
-        int unitLen = unit == CssConstants.Rem || unit == CssConstants.Rlh ? 3 :
-                      unit == CssConstants.Vmin || unit == CssConstants.Vmax ? 4 :
-                      unit == CssConstants.Q ? 1 : 2;
+        // Trim by the unit AS WRITTEN, not by the canonical spelling: the
+        // small/large/dynamic viewport variants canonicalise to something shorter
+        // (svmin → vmin), so unit.Length would leave the prefix on the number.
         string number = value[..^unitLen];
         if (!double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out double parsedNumber))
             return false;
@@ -588,29 +710,43 @@ public static class CssLengthParser
     /// <summary>
     /// Font-free approximation of a single CSS length value to pixels, used where no live
     /// font/box metrics are available: <c>em</c>/<c>rem</c>/<c>ic</c> = 16px, <c>ex</c>/<c>ch</c> = 8px,
-    /// <c>lh</c>/<c>rlh</c> = 19.2px, and <c>vw</c>/<c>vh</c>/<c>vmin</c>/<c>vmax</c> resolved against the
-    /// supplied viewport (0 = unavailable → those units yield <see cref="double.NaN"/>). A bare number
+    /// <c>lh</c>/<c>rlh</c> = 19.2px, and the viewport units — <c>vw</c>/<c>vh</c>, the logical
+    /// <c>vi</c>/<c>vb</c>, <c>vmin</c>/<c>vmax</c>, and their <c>sv*</c>/<c>lv*</c>/<c>dv*</c>
+    /// variants — resolved against the supplied viewport (0 = unavailable → those units yield
+    /// <see cref="double.NaN"/>). <paramref name="rootWritingMode"/> selects the axes for the
+    /// logical units. A bare number
     /// is treated as pixels. Returns <see cref="double.NaN"/> when the value cannot be parsed. Distinct
     /// from <see cref="ParseLength(string, double, double, bool)"/>, which resolves against caller-supplied
     /// font/percentage bases.
     /// </summary>
-    public static double ParseToPixels(string value, int viewportWidth = 0, int viewportHeight = 0)
+    public static double ParseToPixels(string value, int viewportWidth = 0, int viewportHeight = 0,
+        string? rootWritingMode = null)
     {
         if (string.IsNullOrWhiteSpace(value)) return double.NaN;
 
         var v = NormalizeSingleValueLengthFunction(value).Trim().ToLowerInvariant();
-        if (viewportHeight > 0 && v.EndsWith("vh"))
-            return TryParseLeadingNumber(v, 2, out var vh) ? (vh / 100.0) * viewportHeight : double.NaN;
-        if (viewportWidth > 0 && v.EndsWith("vw"))
-            return TryParseLeadingNumber(v, 2, out var vw) ? (vw / 100.0) * viewportWidth : double.NaN;
 
-        var viewportMin = Math.Min(viewportWidth, viewportHeight);
-        if (viewportMin > 0 && v.EndsWith("vmin"))
-            return TryParseLeadingNumber(v, 4, out var vmin) ? (vmin / 100.0) * viewportMin : double.NaN;
+        // One scan covers the whole viewport family; the canonical spelling then
+        // picks the axis, and tokenLength trims the written unit (svmin → 5).
+        if (TryScanTrailingViewportUnit(v, out var viewportUnit, out var viewportUnitLength))
+        {
+            var vertical = CssWritingMode.IsVertical(rootWritingMode);
+            var axis = viewportUnit switch
+            {
+                CssConstants.Vw => viewportWidth,
+                CssConstants.Vh => viewportHeight,
+                CssConstants.Vi => vertical ? viewportHeight : viewportWidth,
+                CssConstants.Vb => vertical ? viewportWidth : viewportHeight,
+                CssConstants.Vmin => Math.Min(viewportWidth, viewportHeight),
+                CssConstants.Vmax => Math.Max(viewportWidth, viewportHeight),
+                _ => 0,
+            };
 
-        var viewportMax = Math.Max(viewportWidth, viewportHeight);
-        if (viewportMax > 0 && v.EndsWith("vmax"))
-            return TryParseLeadingNumber(v, 4, out var vmax) ? (vmax / 100.0) * viewportMax : double.NaN;
+            if (axis > 0 && TryParseLeadingNumber(v, viewportUnitLength, out var viewportNumber))
+                return (viewportNumber / 100.0) * axis;
+
+            return double.NaN;
+        }
 
         if (v.EndsWith("px"))
             return TryParseLeadingNumber(v, 2, out var px) ? px : double.NaN;
@@ -723,18 +859,31 @@ public static class CssLengthParser
     /// string and sets <paramref name="hasUnit"/>; falls back to
     /// <paramref name="defaultUnit"/> when no unit is present.
     /// </summary>
-    internal static string GetUnit(string length, string defaultUnit, out bool hasUnit)
+    internal static string GetUnit(string length, string defaultUnit, out bool hasUnit) =>
+        GetUnit(length, defaultUnit, out hasUnit, out _);
+
+    /// <summary>
+    /// As <see cref="GetUnit(string, string, out bool)"/>, but also reports how
+    /// many characters the unit occupied <em>as written</em>.
+    /// <para>
+    /// The two can differ: the small/large/dynamic viewport variants canonicalise
+    /// onto a shorter spelling (<c>svmin</c> → <c>vmin</c>), so a caller that
+    /// trims the number by the canonical unit's length would leave the variant
+    /// prefix behind — <c>"100svmin"</c> would yield the number <c>"100s"</c> and
+    /// fail to parse. Every site that splits number-from-unit must use
+    /// <paramref name="unitLength"/>, not <c>unit.Length</c>.
+    /// </para>
+    /// </summary>
+    internal static string GetUnit(string length, string defaultUnit, out bool hasUnit, out int unitLength)
     {
-        // Check for 4-character units first (e.g. "vmin", "vmax")
-        if (length.Length >= 5)
+        // The viewport family (vw/vh/vi/vb, vmin/vmax, and their sv*/lv*/dv*
+        // variants) is scanned longest-spelling-first in one place, so "svmin" is
+        // not mistaken for "vmin" preceded by a stray 's'.
+        if (TryScanTrailingViewportUnit(length, out var viewportUnit, out var viewportUnitLength))
         {
-            var last4 = length.Substring(length.Length - 4, 4);
-            if (last4.Equals(CssConstants.Vmin, StringComparison.OrdinalIgnoreCase) ||
-                last4.Equals(CssConstants.Vmax, StringComparison.OrdinalIgnoreCase))
-            {
-                hasUnit = true;
-                return last4.ToLowerInvariant();
-            }
+            hasUnit = true;
+            unitLength = viewportUnitLength;
+            return viewportUnit;
         }
 
         // Check for 3-character units first (e.g. "rem")
@@ -743,16 +892,19 @@ public static class CssLengthParser
             if (length.EndsWith(CssConstants.Rem, StringComparison.Ordinal))
             {
                 hasUnit = true;
+                unitLength = 3;
                 return CssConstants.Rem;
             }
 
             if (length.EndsWith(CssConstants.Rlh, StringComparison.OrdinalIgnoreCase))
             {
                 hasUnit = true;
+                unitLength = 3;
                 return CssConstants.Rlh;
             }
         }
 
+        unitLength = 2;
         var unit = length.Length >= 3 ? length.Substring(length.Length - 2, 2) : string.Empty;
         switch (unit)
         {
@@ -770,13 +922,8 @@ public static class CssLengthParser
                 hasUnit = true;
                 break;
             default:
-                // Check for 2-character viewport units (vh, vw)
-                if (unit.Equals(CssConstants.Vh, StringComparison.OrdinalIgnoreCase) ||
-                    unit.Equals(CssConstants.Vw, StringComparison.OrdinalIgnoreCase))
-                {
-                    hasUnit = true;
-                    return unit.ToLowerInvariant();
-                }
+                // The 2-character viewport units (vh/vw/vi/vb) were already taken
+                // by TryScanTrailingViewportUnit above.
                 // Check for single-character units (e.g. "Q" / "q")
                 if (length.Length >= 2)
                 {
@@ -785,10 +932,12 @@ public static class CssLengthParser
                     if (lastChar == 'q' && (char.IsDigit(prevChar) || prevChar == '.'))
                     {
                         hasUnit = true;
+                        unitLength = 1;
                         return CssConstants.Q;
                     }
                 }
                 hasUnit = false;
+                unitLength = 0;
                 unit = defaultUnit ?? string.Empty;
                 break;
         }
