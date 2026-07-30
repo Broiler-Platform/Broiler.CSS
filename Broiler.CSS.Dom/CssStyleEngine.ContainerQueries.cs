@@ -39,11 +39,40 @@ public sealed partial class CssStyleEngine
         if (condition.Length == 0)
             return false;
 
-        var container = FindQueryContainer(element, pseudoElement, name);
-        if (container is null)
+        // A size container needs container-type: size/inline-size; a STYLE container does not —
+        // css-contain-3 makes every element a style query container. So the two are resolved
+        // separately and a style-only query still evaluates when no size container exists.
+        var sizeContainer = FindQueryContainer(element, pseudoElement, name);
+        var styleContainer = FindStyleQueryContainer(element, pseudoElement, name);
+
+        if (sizeContainer is null && styleContainer is null)
             return false;
 
-        return EvaluateContainerCondition(condition, container.Value.InlineSize, container.Value.BlockSize);
+        return EvaluateContainerCondition(
+            condition, sizeContainer?.InlineSize, sizeContainer?.BlockSize, styleContainer);
+    }
+
+    /// <summary>
+    /// Finds the style query container for (<paramref name="element"/>,
+    /// <paramref name="pseudoElement"/>): the nearest ancestor whose <c>container-name</c> includes
+    /// <paramref name="name"/>, or simply the nearest ancestor when the query is unnamed. Unlike a
+    /// size container this needs no <c>container-type</c> — css-contain-3 §"Style Container
+    /// Features" makes every element a style container.
+    /// </summary>
+    private DomElement? FindStyleQueryContainer(DomElement element, string? pseudoElement, string? name)
+    {
+        var start = pseudoElement is not null ? element : ParentElement(element);
+        if (name is null)
+            return start;
+
+        for (var ancestor = start; ancestor is not null; ancestor = ParentElement(ancestor))
+        {
+            var declared = GetCascadedDeclarationMap(ancestor, null, includeInlineStyle: true);
+            if (ContainerNameMatches(declared.GetValueOrDefault("container-name"), name))
+                return ancestor;
+        }
+
+        return null;
     }
 
     /// <summary>Splits an optional leading <c>&lt;container-name&gt;</c> off a container condition. A
@@ -61,6 +90,13 @@ public sealed partial class CssStyleEngine
         if (first.Equals("not", StringComparison.OrdinalIgnoreCase) ||
             first.Equals("and", StringComparison.OrdinalIgnoreCase) ||
             first.Equals("or", StringComparison.OrdinalIgnoreCase))
+            return (null, text);
+
+        // An identifier immediately followed by '(' is a FUNCTION, not a container name —
+        // `@container style(--x: y)` queries an unnamed container, it does not name one "style".
+        // Reading it as a name sent the lookup hunting for container-name: style, found nothing,
+        // and made every style query false.
+        if (i < text.Length && text[i] == '(')
             return (null, text);
 
         return (first, text[i..].TrimStart());
@@ -122,7 +158,8 @@ public sealed partial class CssStyleEngine
 
     // ---- Condition evaluation ---------------------------------------------
 
-    private static bool EvaluateContainerCondition(string condition, double? inlineSize, double? blockSize)
+    private bool EvaluateContainerCondition(
+        string condition, double? inlineSize, double? blockSize, DomElement? styleContainer)
     {
         var tokens = TokenizeContainerCondition(condition);
         if (tokens.Count == 0)
@@ -146,7 +183,7 @@ public sealed partial class CssStyleEngine
                 continue;
             }
 
-            var value = EvaluateContainerGroup(token, inlineSize, blockSize);
+            var value = EvaluateContainerGroup(token, inlineSize, blockSize, styleContainer);
             if (negateNext)
             {
                 value = !value;
@@ -200,6 +237,31 @@ public sealed partial class CssStyleEngine
                 var start = i;
                 while (i < s.Length && !char.IsWhiteSpace(s[i]) && s[i] != '(')
                     i++;
+
+                // A function token — style(...) — keeps its argument list: splitting `style` from
+                // `(...)` would leave the argument looking like a nested condition and the name
+                // looking like a bare size feature, so both halves would evaluate false.
+                if (i < s.Length && s[i] == '(')
+                {
+                    var depth = 0;
+                    for (; i < s.Length; i++)
+                    {
+                        if (s[i] == '(')
+                        {
+                            depth++;
+                        }
+                        else if (s[i] == ')')
+                        {
+                            depth--;
+                            if (depth == 0)
+                            {
+                                i++;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 tokens.Add(s[start..i]);
             }
         }
@@ -207,18 +269,139 @@ public sealed partial class CssStyleEngine
         return tokens;
     }
 
-    private static bool EvaluateContainerGroup(string group, double? inlineSize, double? blockSize)
+    private bool EvaluateContainerGroup(
+        string group, double? inlineSize, double? blockSize, DomElement? styleContainer)
     {
         var inner = group.Trim();
+
+        // style(...) is a feature, not a nesting group — check before unwrapping parentheses, or
+        // its argument would be mistaken for a nested condition.
+        if (TryReadStyleFeature(inner, out var styleFeature))
+            return EvaluateStyleFeature(styleFeature, styleContainer);
+
         if (inner.StartsWith('(') && inner.EndsWith(')'))
             inner = inner[1..^1].Trim();
+
+        if (TryReadStyleFeature(inner, out styleFeature))
+            return EvaluateStyleFeature(styleFeature, styleContainer);
 
         // A nested query (further parentheses, or an and/or/not combination) recurses; otherwise this
         // is a single size feature.
         if (inner.Contains('('))
-            return EvaluateContainerCondition(inner, inlineSize, blockSize);
+            return EvaluateContainerCondition(inner, inlineSize, blockSize, styleContainer);
 
         return EvaluateSizeFeature(inner, inlineSize, blockSize);
+    }
+
+    /// <summary>Reads the body of a <c>style(...)</c> query, or reports false when
+    /// <paramref name="group"/> is not one.</summary>
+    private static bool TryReadStyleFeature(string group, out string feature)
+    {
+        feature = string.Empty;
+        const string Name = "style";
+        if (!group.StartsWith(Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var i = Name.Length;
+        while (i < group.Length && char.IsWhiteSpace(group[i]))
+            i++;
+        if (i >= group.Length || group[i] != '(' || !group.EndsWith(')'))
+            return false;
+
+        feature = group[(i + 1)..^1].Trim();
+        return feature.Length > 0;
+    }
+
+    /// <summary>
+    /// Evaluates a <c>style(--name: value)</c> query against <paramref name="container"/>.
+    /// <para>
+    /// Only the custom-property form is supported. A registered (<c>@property</c>) or plain custom
+    /// property is looked up on the container, its <c>contrast-color()</c> resolved, and compared
+    /// to the queried value after whitespace normalisation — css-contain-3 compares computed
+    /// values, and for a custom property that is its token stream. A query naming a non-custom
+    /// property returns false, matching the pre-support behaviour of dropping the rule rather than
+    /// applying a declaration on a guess.
+    /// </para>
+    /// </summary>
+    private bool EvaluateStyleFeature(string feature, DomElement? container)
+    {
+        if (container is null)
+            return false;
+
+        var colon = feature.IndexOf(':');
+        if (colon < 0)
+            return false;
+
+        var name = feature[..colon].Trim();
+        var expected = feature[(colon + 1)..].Trim();
+        if (!name.StartsWith("--", StringComparison.Ordinal) || expected.Length == 0)
+            return false;
+
+        var actual = ResolveStyleQueryProperty(container, name);
+        if (actual is null)
+            return false;
+
+        // A registered <color> property computes to an absolute colour, so `white` and
+        // `rgb(255, 255, 255)` are the same computed value and must compare equal. Colour
+        // comparison first, then the token-stream comparison an unregistered property gets.
+        if (CssValueParser.TryParseColor(actual, out var actualColor) &&
+            CssValueParser.TryParseColor(expected, out var expectedColor))
+        {
+            return actualColor == expectedColor;
+        }
+
+        return NormalizeStyleQueryValue(actual) == NormalizeStyleQueryValue(expected);
+    }
+
+    /// <summary>
+    /// Resolves a custom property for a style query by walking the container's ancestor chain for
+    /// the nearest cascaded declaration, then falling back to the <c>@property</c>
+    /// <c>initial-value</c>.
+    /// <para>
+    /// The cascaded map is used rather than <c>GetComputedStyle</c> deliberately: this runs
+    /// <em>during</em> style computation, and re-entering the full computation for an ancestor
+    /// would recurse. Walking for the nearest declaration models the default inheritance of custom
+    /// properties; a registration with <c>inherits: false</c> is not honoured here, which is a
+    /// known gap rather than an oversight.
+    /// </para>
+    /// </summary>
+    private string? ResolveStyleQueryProperty(DomElement container, string name)
+    {
+        for (var ancestor = container; ancestor is not null; ancestor = ParentElement(ancestor))
+        {
+            var declared = GetCascadedDeclarationMap(ancestor, null, includeInlineStyle: true);
+            if (declared.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+                return CssContrastColor.ResolveFunctions(value.Trim());
+        }
+
+        var registrations = CollectCustomPropertyRegistrations();
+        if (registrations.TryGetValue(name, out var registration) && registration.InitialValue is { } initial)
+            return CssContrastColor.ResolveFunctions(initial.Trim());
+
+        return null;
+    }
+
+    /// <summary>Collapses internal whitespace and lower-cases, so <c>rgb(255, 255, 255)</c> and
+    /// <c>rgb(255 255 255)</c>-style spacing differences do not defeat the comparison.</summary>
+    private static string NormalizeStyleQueryValue(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        var lastWasSpace = false;
+        foreach (var ch in value.Trim())
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                lastWasSpace = true;
+                continue;
+            }
+
+            if (lastWasSpace && sb.Length > 0 && ch != ',' && ch != ')')
+                sb.Append(' ');
+            lastWasSpace = false;
+            sb.Append(char.ToLowerInvariant(ch));
+        }
+
+        return sb.ToString();
     }
 
     private static bool EvaluateSizeFeature(string feature, double? inlineSize, double? blockSize)

@@ -117,6 +117,13 @@ public static class CssValueParser
             return TryParseRgbColor(input, out color);
         if (StartsFunction(input, "hsl") || StartsFunction(input, "hsla"))
             return TryParseHslColor(input, out color);
+        // CSS Color 5: contrast-color(<color>) resolves to black or white, so it is an absolute
+        // colour once its argument parses (WPT issue #1491 problem 6).
+        if (StartsFunction(input, "contrast-color"))
+            return CssContrastColor.TryResolve(input, out color);
+        // CSS Color 4 §6 system colours (Canvas, ButtonFace, …) are <color> keywords too.
+        if (CssSystemColors.TryResolve(input, out color))
+            return true;
 
         return false;
     }
