@@ -34,6 +34,32 @@ public sealed class CssSelectorMatcherTests
     }
 
     [Fact]
+    public void NthOfSelector_Does_Not_Match_Element_Outside_The_Filtered_Set()
+    {
+        // Regression (WPT css/selectors/nth-last-child-of-tagname.html): an element that does not
+        // itself match S must never match `:nth-child(An+B of S)` — the index is counted among the
+        // elements matching S (Selectors 4 §6.6.5.1). Such an element is filtered out of the
+        // sibling list, so FindIndex returns -1; the from-the-end form used to compute
+        // `Count - (-1)` = Count+1, a positive position that then satisfied `odd`/`even`. In the
+        // WPT test that made <body> match `:nth-last-child(odd of webkit, fast)` and propagated a
+        // lime background to the whole canvas.
+        var tree = CreateTree();
+        var matcher = new CssSelectorMatcher();
+
+        // `note` is a span; neither it nor any sibling matches `p`, so the filtered set is empty.
+        Assert.False(matcher.Matches(tree.Note, "span:nth-last-child(odd of p)"));
+        Assert.False(matcher.Matches(tree.Note, "span:nth-child(odd of p)"));
+
+        // The element is filtered out while siblings remain in the set.
+        Assert.False(matcher.Matches(tree.Note, "span:nth-last-child(1 of .item)"));
+
+        // Elements that ARE in the filtered set still count positions among that set only.
+        Assert.True(matcher.Matches(tree.Second, "p:nth-last-child(1 of .item)"));
+        Assert.True(matcher.Matches(tree.First, "p:nth-last-child(2 of .item)"));
+        Assert.True(matcher.Matches(tree.First, "p:nth-child(1 of .item)"));
+    }
+
+    [Fact]
     public void Matches_Not_With_Nested_Attribute_Selector()
     {
         // Regression: a nested attribute selector inside :not() (or :is()/:where()) must be

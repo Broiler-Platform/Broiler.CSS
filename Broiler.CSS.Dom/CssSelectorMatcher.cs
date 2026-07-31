@@ -274,10 +274,18 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             : ElementSiblings(element);
         if (filter is not null)
             siblings = [.. siblings.Where(candidate => MatchesAny(candidate, filter, null))];
-        var position = fromEnd
-            ? siblings.Count - siblings.FindIndex(candidate => ReferenceEquals(candidate, element))
-            : siblings.FindIndex(candidate => ReferenceEquals(candidate, element)) + 1;
-        return position > 0 && EvaluateNth(position, nth);
+        // `:nth-child(An+B of S)` only matches an element that is itself in the filtered set
+        // (Selectors 4 §6.6.5.1) — the index is counted "among the elements that match S". An
+        // element filtered out is absent from `siblings`, so FindIndex returns -1, and the
+        // from-the-end position must not be computed from it: `Count - (-1)` is Count+1, a
+        // positive index that then happily satisfies `odd`/`even`. That is how
+        // `:nth-last-child(odd of webkit, fast)` matched <body> — no sibling matches the list, so
+        // the empty set yielded position 1 — and the lime background propagated to the canvas.
+        var index = siblings.FindIndex(candidate => ReferenceEquals(candidate, element));
+        if (index < 0)
+            return false;
+        var position = fromEnd ? siblings.Count - index : index + 1;
+        return EvaluateNth(position, nth);
     }
 
     private static bool MatchesAttribute(DomElement element, AttributeFilter filter)
