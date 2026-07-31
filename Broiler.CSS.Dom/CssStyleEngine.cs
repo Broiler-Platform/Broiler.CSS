@@ -840,6 +840,13 @@ public sealed partial class CssStyleEngine
 
     private static bool ContainsPseudoElementSelector(string selector)
     {
+        // ::part() is written as a pseudo-element but selects a real element in a shadow tree, and
+        // its declarations style that element's own box. It therefore belongs on the ordinary
+        // element-matching path (CssSelectorMatcher handles it there); treating it as a
+        // pseudo-element instead dropped author `::part(name) { … }` rules entirely.
+        if (EndsWithPartSelector(selector))
+            return false;
+
         if (selector.IndexOf("::", StringComparison.Ordinal) >= 0)
             return true;
 
@@ -847,6 +854,17 @@ public sealed partial class CssStyleEngine
             || selector.EndsWith(":after", StringComparison.OrdinalIgnoreCase)
             || selector.EndsWith(":first-line", StringComparison.OrdinalIgnoreCase)
             || selector.EndsWith(":first-letter", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Whether <paramref name="selector"/> ends in a <c>::part(name…)</c> — the form that
+    /// resolves to a real element rather than to a pseudo-element of one.</summary>
+    private static bool EndsWithPartSelector(string selector)
+    {
+        var index = selector.LastIndexOf("::part(", StringComparison.OrdinalIgnoreCase);
+        if (index < 0 || !selector.EndsWith(")", StringComparison.Ordinal))
+            return false;
+
+        return selector[(index + "::part(".Length)..^1].IndexOf(')') < 0;
     }
 
     private static bool TryStripPseudoElementSelector(string selector, string pseudoElement, out string baseSelector)

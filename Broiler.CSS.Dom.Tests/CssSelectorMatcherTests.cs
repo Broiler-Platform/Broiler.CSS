@@ -60,6 +60,47 @@ public sealed class CssSelectorMatcherTests
     }
 
     [Fact]
+    public void Part_Selector_Matches_An_Exposed_Part_Under_A_Matching_Host()
+    {
+        // CSS Shadow Parts §3: `<host>::part(name…)` selects an element inside a shadow tree that
+        // exposes every requested name through its `part` attribute. Unlike the other `::`
+        // selectors it resolves to a real element, so it belongs on the element-matching path.
+        var document = new DomDocument();
+        var host = document.CreateElement("div");
+        host.Id = "host";
+        var shadowRoot = document.CreateElement("#shadow-root");
+        var part = document.CreateElement("span");
+        part.SetAttribute("part", "label extra");
+        document.AppendChild(host);
+        host.AppendChild(shadowRoot);
+        shadowRoot.AppendChild(part);
+
+        var matcher = new CssSelectorMatcher();
+
+        // A bare ::part() is *::part() — any host.
+        Assert.True(matcher.Matches(part, "::part(label)"));
+        Assert.True(matcher.Matches(part, "*::part(label)"));
+        Assert.True(matcher.Matches(part, "#host::part(label)"));
+        Assert.True(matcher.Matches(part, "div::part(extra)"));
+
+        // Every name in the argument must be exposed.
+        Assert.True(matcher.Matches(part, "::part(label extra)"));
+        Assert.False(matcher.Matches(part, "::part(label missing)"));
+        Assert.False(matcher.Matches(part, "::part(missing)"));
+
+        // The host selector gates the match, and the host is not its own part.
+        Assert.False(matcher.Matches(part, "#other::part(label)"));
+        Assert.False(matcher.Matches(host, "::part(label)"));
+
+        // An element outside any shadow tree exposing a part attribute still matches a bare
+        // ::part() — consumers that flatten shadow trees for rendering leave no wrapper behind.
+        var loose = document.CreateElement("span");
+        loose.SetAttribute("part", "label");
+        host.AppendChild(loose);
+        Assert.True(matcher.Matches(loose, "::part(label)"));
+    }
+
+    [Fact]
     public void Matches_Not_With_Nested_Attribute_Selector()
     {
         // Regression: a nested attribute selector inside :not() (or :is()/:where()) must be

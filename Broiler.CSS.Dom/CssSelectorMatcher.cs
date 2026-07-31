@@ -19,6 +19,9 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         if (string.IsNullOrWhiteSpace(selector))
             return false;
 
+        if (TrySplitPartSelector(selector.Trim(), out var hostSelector, out var partNames))
+            return MatchesPart(element, hostSelector, partNames, scope);
+
         var parts = SplitParts(selector.Trim());
         if (parts.Count == 0 || !MatchesCompound(element, parts[^1].Compound, scope))
             return false;
@@ -704,6 +707,89 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         var index = source.IndexOf("::", StringComparison.Ordinal);
         return index >= 0 ? source[..index] : source;
     }
+
+    /// <summary>
+    /// Splits <c>&lt;host-selector&gt;::part(name…)</c> (CSS Shadow Parts §3). Returns
+    /// <see langword="false"/> for every other selector, including one that only has
+    /// <c>::part()</c> somewhere other than at the end (<c>::part(x)::before</c> addresses a
+    /// pseudo-element of the part, which is not an element this matcher can return).
+    /// </summary>
+    private static bool TrySplitPartSelector(string selector, out string hostSelector, out string[] partNames)
+    {
+        hostSelector = string.Empty;
+        partNames = [];
+
+        var index = selector.LastIndexOf("::part(", StringComparison.OrdinalIgnoreCase);
+        if (index < 0 || !selector.EndsWith(")", StringComparison.Ordinal))
+            return false;
+
+        var argumentStart = index + "::part(".Length;
+        var argument = selector[argumentStart..^1];
+        if (argument.IndexOf(')') >= 0)
+            return false; // something follows the ::part() — not a plain part selector
+
+        // The argument is a space-separated <ident>+ list; the element must expose all of them.
+        partNames = argument.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (partNames.Length == 0)
+            return false;
+
+        hostSelector = selector[..index].TrimEnd();
+        return true;
+    }
+
+    /// <summary>
+    /// Matches <c>&lt;host-selector&gt;::part(name…)</c>: an element inside a shadow tree that
+    /// exposes every requested name through its <c>part</c> attribute, whose shadow host matches
+    /// the selector before the pseudo-element. A bare <c>::part(name)</c> is
+    /// <c>*::part(name)</c> — any host.
+    /// </summary>
+    /// <remarks>
+    /// Unlike the other pseudo-elements this matcher sees, <c>::part()</c> resolves to a real
+    /// element whose own box takes the declarations, so it belongs on the ordinary element-matching
+    /// path rather than the originating-element one (see
+    /// <c>CssStyleEngine.ContainsPseudoElementSelector</c>).
+    /// <para>
+    /// The host is found by walking up to the nearest shadow root. A consumer that has already
+    /// flattened its shadow trees for rendering has no such ancestor left, so the host selector is
+    /// then matched against any ancestor instead — the part attribute still identifies the element,
+    /// and the alternative would be to stop matching the moment the tree is flattened.
+    /// </para>
+    /// </remarks>
+    private bool MatchesPart(DomElement element, string hostSelector, string[] partNames, DomElement? scope)
+    {
+        var exposed = (element.GetAttribute("part") ?? string.Empty)
+            .Split(AsciiWhitespace, StringSplitOptions.RemoveEmptyEntries);
+        if (exposed.Length == 0)
+            return false;
+
+        foreach (var required in partNames)
+        {
+            if (!exposed.Contains(required, StringComparer.Ordinal))
+                return false;
+        }
+
+        if (hostSelector.Length == 0 || hostSelector == "*")
+            return true;
+
+        for (var ancestor = Parent(element); ancestor is not null; ancestor = Parent(ancestor))
+        {
+            if (IsShadowRoot(ancestor))
+                return Parent(ancestor) is { } host && Matches(host, hostSelector, scope);
+
+            // Flattened tree: no shadow root survives, so accept any matching ancestor.
+            if (Matches(ancestor, hostSelector, scope))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>The <c>#shadow-root</c> wrapper element a shadow host carries before a consumer
+    /// flattens it for rendering. Checked on both names because a consumer may mint the wrapper
+    /// through either.</summary>
+    private static bool IsShadowRoot(DomElement element) =>
+        string.Equals(element.LocalName, "#shadow-root", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(element.TagName, "#shadow-root", StringComparison.OrdinalIgnoreCase);
     
     private static string NormalizeImpliedDescendantStar(string selector)
     {
