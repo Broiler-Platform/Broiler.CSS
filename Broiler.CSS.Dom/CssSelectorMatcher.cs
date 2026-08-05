@@ -177,6 +177,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 "is" or "where" => argument is not null && MatchesAny(element, argument, scope),
                 "has" => argument is not null && MatchesHas(element, argument),
                 "lang" => argument is not null && MatchesLanguage(element, argument),
+                "dir" => argument is not null && MatchesDirectionality(element, argument),
                 "open" => IsNamed(element, "details", "dialog") && element.HasAttribute("open"),
                 "enabled" => IsFormControl(element) && !element.HasAttribute("disabled"),
                 "disabled" => IsFormControl(element) && element.HasAttribute("disabled"),
@@ -308,6 +309,128 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             _ => false,
         };
     }
+
+    /// <summary>
+    /// <c>:dir(ltr|rtl)</c> — HTML §3.2.6.6 "the directionality of an element".
+    /// <para>
+    /// Previously unmodelled, so it fell through to the lenient default and matched
+    /// <em>every</em> element: <c>:dir(ltr)</c> and <c>:dir(rtl)</c> both applied to the whole
+    /// document at once, which is how a single shadow-tree rule painted an entire canvas
+    /// (<c>css/css-shadow/shadow-directionality-001/002</c>).
+    /// </para>
+    /// <para>
+    /// The directionality is the document-language one, not the CSS <c>direction</c> property:
+    /// it comes from the nearest ancestor-or-self carrying a valid <c>dir</c> attribute, and
+    /// defaults to <c>ltr</c> at the root. An argument other than <c>ltr</c>/<c>rtl</c> matches
+    /// nothing (Selectors 4 §11.2).
+    /// </para>
+    /// </summary>
+    private static bool MatchesDirectionality(DomElement element, string source)
+    {
+        var wanted = source.Trim().Trim('"', '\'');
+        if (!AsciiEquals(wanted, "ltr") && !AsciiEquals(wanted, "rtl"))
+            return false;
+
+        return AsciiEquals(Directionality(element), wanted);
+    }
+
+    /// <summary>
+    /// The element's directionality: its own <c>dir</c> attribute when valid, else the nearest
+    /// ancestor's, else <c>ltr</c>. <c>dir="auto"</c> — and a <c>&lt;bdi&gt;</c> with no valid
+    /// <c>dir</c>, whose default it is — resolves from the first strong directional character
+    /// of the element's text.
+    /// </summary>
+    private static string Directionality(DomElement element)
+    {
+        for (DomElement? current = element; current is not null; current = Parent(current))
+        {
+            var declared = current.GetAttribute("dir");
+
+            if (declared is not null && AsciiEquals(declared, "ltr"))
+                return "ltr";
+            if (declared is not null && AsciiEquals(declared, "rtl"))
+                return "rtl";
+
+            var isAuto = declared is not null && AsciiEquals(declared, "auto");
+            // <bdi> isolates its contents and defaults to auto directionality; an <input> or
+            // <textarea> resolves auto from its value rather than its (empty) child text.
+            if (isAuto || (declared is null && IsNamed(current, "bdi")))
+                return AutoDirectionality(current);
+        }
+
+        return "ltr";
+    }
+
+    /// <summary>
+    /// Auto directionality: <c>rtl</c> when the first strong directional character of the
+    /// element's text is right-to-left, <c>ltr</c> otherwise (including "no strong character").
+    /// Text inside a descendant that carries its own <c>dir</c>, and inside
+    /// <c>&lt;script&gt;</c>/<c>&lt;style&gt;</c>, is skipped, per the HTML algorithm.
+    /// </summary>
+    private static string AutoDirectionality(DomElement element)
+    {
+        if (IsNamed(element, "input", "textarea"))
+            return StrongDirectionality(element.GetAttribute("value") ?? string.Empty) ?? "ltr";
+
+        return AutoDirectionalityOfChildren(element) ?? "ltr";
+    }
+
+    private static string? AutoDirectionalityOfChildren(DomElement element)
+    {
+        foreach (var child in element.ChildNodes)
+        {
+            switch (child)
+            {
+                case DomText text:
+                    if (StrongDirectionality(text.Data) is { } found)
+                        return found;
+                    break;
+                case DomElement childElement when
+                    !IsNamed(childElement, "script", "style", "textarea", "bdi") &&
+                    childElement.GetAttribute("dir") is null:
+                    if (AutoDirectionalityOfChildren(childElement) is { } nested)
+                        return nested;
+                    break;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The direction of the first strong (L / R / AL) character of <paramref name="text"/>, or
+    /// <see langword="null"/> when it has none.
+    /// </summary>
+    private static string? StrongDirectionality(string text)
+    {
+        foreach (var character in text)
+        {
+            if (IsRightToLeft(character))
+                return "rtl";
+            if (char.IsLetter(character))
+                return "ltr";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="character"/> is strongly right-to-left (Unicode bidi class R or
+    /// AL). Approximated by script block rather than by a full bidi-class table, which .NET does
+    /// not expose: the RTL scripts occupy contiguous blocks, so the ranges below are exact for
+    /// the BMP characters an HTML document can carry in a single UTF-16 unit.
+    /// </summary>
+    private static bool IsRightToLeft(char character) => character switch
+    {
+        // Hebrew through Arabic Extended-A — Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan,
+        // Mandaic and the Arabic extensions run contiguously with no left-to-right script among
+        // them.
+        >= '\u0590' and <= '\u08FF' => true,
+        // Hebrew and Arabic presentation forms.
+        >= '\uFB1D' and <= '\uFDFF' => true,
+        >= '\uFE70' and <= '\uFEFF' => true,
+        _ => false,
+    };
 
     private static bool MatchesLanguage(DomElement element, string source)
     {
