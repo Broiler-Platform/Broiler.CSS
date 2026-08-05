@@ -274,10 +274,14 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             : ElementSiblings(element);
         if (filter is not null)
             siblings = [.. siblings.Where(candidate => MatchesAny(candidate, filter, null))];
-        var position = fromEnd
-            ? siblings.Count - siblings.FindIndex(candidate => ReferenceEquals(candidate, element))
-            : siblings.FindIndex(candidate => ReferenceEquals(candidate, element)) + 1;
-        return position > 0 && EvaluateNth(position, nth);
+        // `:nth-child(An+B of S)` only matches elements that themselves match S, so an
+        // element missing from the filtered list never matches. Guarding the lookup is
+        // what enforces that: `siblings.Count - (-1)` is a positive position that the
+        // An+B test would otherwise happily accept.
+        var index = siblings.FindIndex(candidate => ReferenceEquals(candidate, element));
+        if (index < 0)
+            return false;
+        return EvaluateNth(fromEnd ? siblings.Count - index : index + 1, nth);
     }
 
     private static bool MatchesAttribute(DomElement element, AttributeFilter filter)

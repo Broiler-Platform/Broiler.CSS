@@ -142,6 +142,66 @@ public sealed class CssSelectorMatcherTests
     }
 
     [Fact]
+    public void Nth_Child_Of_Selector_Requires_The_Element_To_Match_The_Filter()
+    {
+        // Regression for the WPT test css/selectors/nth-last-child-of-tagname.html.
+        // `:nth-child(An+B of S)` only matches elements that themselves match S. The
+        // element's position was looked up in the *filtered* sibling list without
+        // checking that the lookup succeeded, so a non-matching element got index -1;
+        // the from-the-end branch then computed `count - (-1)` = count + 1, a positive
+        // position that could satisfy the An+B test. With `odd` that made every
+        // non-matching element with an even filtered-sibling count match — including
+        // <html>, whose lime background propagated to the canvas and painted the whole
+        // page (0.1% pixel match against the reference).
+        var document = new DomDocument();
+        var html = document.CreateElement("html");
+        document.AppendChild(html);
+        var body = document.CreateElement("body");
+        html.AppendChild(body);
+
+        DomElement Append(string name)
+        {
+            var element = document.CreateElement(name);
+            body.AppendChild(element);
+            return element;
+        }
+
+        // The reftest's body, in order: p p webkit p webkit webkit p p fast p p.
+        var intro = Append("p");
+        Append("p");
+        var firstWebkit = Append("webkit");
+        Append("p");
+        var greenWebkit = Append("webkit");
+        var lastWebkit = Append("webkit");
+        Append("p");
+        Append("p");
+        var greenFast = Append("fast");
+        Append("p");
+        var lastParagraph = Append("p");
+
+        var matcher = new CssSelectorMatcher();
+        const string Selector = ":nth-last-child(odd of webkit, fast)";
+
+        // Only the 1st and 3rd elements counting back through {webkit, fast} match.
+        Assert.True(matcher.Matches(greenFast, Selector));
+        Assert.True(matcher.Matches(greenWebkit, Selector));
+        Assert.False(matcher.Matches(lastWebkit, Selector));
+        Assert.False(matcher.Matches(firstWebkit, Selector));
+
+        // Elements outside the `of` selector list never match, at any depth.
+        Assert.False(matcher.Matches(html, Selector));
+        Assert.False(matcher.Matches(body, Selector));
+        Assert.False(matcher.Matches(intro, Selector));
+        Assert.False(matcher.Matches(lastParagraph, Selector));
+
+        // The forward-counting form keeps the same rule.
+        Assert.True(matcher.Matches(firstWebkit, ":nth-child(1 of webkit, fast)"));
+        Assert.True(matcher.Matches(greenWebkit, ":nth-child(2 of webkit, fast)"));
+        Assert.False(matcher.Matches(html, ":nth-child(1 of webkit, fast)"));
+        Assert.False(matcher.Matches(intro, ":nth-child(1 of webkit, fast)"));
+    }
+
+    [Fact]
     public void Specificity_Is_Owned_By_The_Css_Kernel()
     {
         Assert.Equal(
