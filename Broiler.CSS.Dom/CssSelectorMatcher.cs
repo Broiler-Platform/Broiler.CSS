@@ -183,6 +183,14 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 "disabled" => IsFormControl(element) && element.HasAttribute("disabled"),
                 "checked" => IsCheckable(element) &&
                     (stateProvider?.IsChecked(element) ?? element.HasAttribute("checked")),
+                // HTML §4.10.16.3: the constraint-validation pseudo-classes match only elements
+                // that take part in constraint validation at all — so an element barred from it
+                // matches NEITHER :valid nor :invalid, which is why each arm tests the candidacy
+                // predicate rather than negating the other.
+                "valid" => IsConstraintValidationCandidate(element) && !HasConstraintViolation(element),
+                "invalid" => IsConstraintValidationCandidate(element) && HasConstraintViolation(element),
+                "required" => SupportsRequiredState(element) && IsRequiredControl(element),
+                "optional" => SupportsRequiredState(element) && !IsRequiredControl(element),
                 "link" or "visited" => IsNamed(element, "a") && element.HasAttribute("href"),
                 // Interactive/user-state pseudo-classes never match in a static
                 // render (nothing is focused, hovered, active, or targeted), so a UA
@@ -855,6 +863,216 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool IsNamed(DomElement element, params string[] names) => names.Any(name => AsciiEquals(element.LocalName, name));
     private static bool IsFormControl(DomElement element) => IsNamed(element, "input", "button", "select", "textarea");
     private static bool IsCheckable(DomElement element) => IsNamed(element, "input") && element.GetAttribute("type") is { } type && (AsciiEquals(type, "checkbox") || AsciiEquals(type, "radio"));
+
+    // ───────────────── HTML §4.10.16: constraint validation ─────────────────
+    //
+    // :valid/:invalid used to fall through to the recognized-but-unmodeled default and so matched
+    // EVERY element — including <html> and <body>, whose background propagates to the canvas. A
+    // bare `:invalid { background-color: … }` (the idiom WPT's form-validation tests use, with no
+    // tag qualifier) therefore painted the whole page instead of the failing control: WPT
+    // html/semantics/forms/constraints/form-validation-validity-textarea-defaultValue rendered a
+    // fully pink canvas against a reference with four pink boxes on white (issue #1552 problem 21).
+    // Matching is a strict narrowing of the lenient default, so it can only remove matches.
+    //
+    // Every rule below is what the reference browser does, measured on 43 constructed cases.
+
+    /// <summary>The <c>input</c> types barred from constraint validation (HTML §4.10.5.3): they
+    /// carry no constraints at all, so they match neither <c>:valid</c> nor <c>:invalid</c>.
+    /// <c>submit</c> is deliberately absent — the reference browser reports a submit button
+    /// <c>:valid</c>.</summary>
+    private static bool IsBarredInputType(DomElement element) =>
+        element.GetAttribute("type") is { } type &&
+        (AsciiEquals(type, "hidden") || AsciiEquals(type, "reset")
+            || AsciiEquals(type, "button") || AsciiEquals(type, "image"));
+
+    /// <summary>The <c>input</c> types that ignore the <c>required</c> attribute, so they are
+    /// <c>:optional</c> even when it is present.</summary>
+    private static bool IgnoresRequiredAttribute(DomElement element) =>
+        element.GetAttribute("type") is { } type &&
+        (AsciiEquals(type, "hidden") || AsciiEquals(type, "reset") || AsciiEquals(type, "button")
+            || AsciiEquals(type, "image") || AsciiEquals(type, "submit")
+            || AsciiEquals(type, "color") || AsciiEquals(type, "range"));
+
+    /// <summary>Whether the element is disabled for validation: its own <c>disabled</c> attribute,
+    /// or an ancestor <c>&lt;fieldset disabled&gt;</c>, which disables the controls it contains.
+    /// </summary>
+    private static bool IsDisabledForValidation(DomElement element)
+    {
+        if (element.HasAttribute("disabled"))
+            return true;
+
+        for (var node = element.ParentNode; node is DomElement ancestor; node = ancestor.ParentNode)
+        {
+            if (IsNamed(ancestor, "fieldset") && ancestor.HasAttribute("disabled"))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// HTML §4.10.16.3: the elements <c>:valid</c>/<c>:invalid</c> can match — a
+    /// <c>&lt;form&gt;</c> or <c>&lt;fieldset&gt;</c>, which take their state from the controls
+    /// they contain, or a listed control that is a candidate for constraint validation. Disabled
+    /// and readonly controls are barred, as are the constraint-free input types.
+    /// </summary>
+    private static bool IsConstraintValidationCandidate(DomElement element)
+    {
+        if (IsNamed(element, "form", "fieldset"))
+            return true;
+
+        if (!IsFormControl(element))
+            return false;
+
+        if (IsDisabledForValidation(element) || element.HasAttribute("readonly"))
+            return false;
+
+        return !IsNamed(element, "input") || !IsBarredInputType(element);
+    }
+
+    /// <summary>The elements <c>:required</c>/<c>:optional</c> partition — every form control,
+    /// whether or not it is a validation candidate: the reference browser reports a barred
+    /// <c>&lt;input type=hidden required&gt;</c> and a <c>&lt;button&gt;</c> as <c>:optional</c>.
+    /// </summary>
+    private static bool SupportsRequiredState(DomElement element) => IsFormControl(element);
+
+    private static bool IsRequiredControl(DomElement element) =>
+        element.HasAttribute("required")
+        && !IsNamed(element, "button")
+        && (!IsNamed(element, "input") || !IgnoresRequiredAttribute(element));
+
+    /// <summary>
+    /// Whether the element is suffering from a constraint violation — the <c>:invalid</c> half,
+    /// asked only of an element <see cref="IsConstraintValidationCandidate"/> already admitted.
+    /// <para>
+    /// A <c>&lt;form&gt;</c>/<c>&lt;fieldset&gt;</c> is invalid when any control it contains is;
+    /// an empty one is valid. <c>minlength</c>/<c>maxlength</c> are deliberately never consulted:
+    /// HTML makes "suffering from being too short/long" conditional on the value having been
+    /// <em>edited by the user</em>, and nothing in a static render ever has been — which is
+    /// exactly what <c>form-validation-validity-textarea-defaultValue</c> pins, expecting
+    /// <c>&lt;textarea minlength=5 required&gt;a&lt;/textarea&gt;</c> to be valid.
+    /// </para>
+    /// </summary>
+    private static bool HasConstraintViolation(DomElement element)
+    {
+        if (IsNamed(element, "form", "fieldset"))
+        {
+            return element.Descendants().OfType<DomElement>().Any(descendant =>
+                !IsNamed(descendant, "form", "fieldset")
+                && IsConstraintValidationCandidate(descendant)
+                && HasConstraintViolation(descendant));
+        }
+
+        if (IsNamed(element, "button"))
+            return false;
+
+        if (IsRequiredControl(element) && IsValueMissing(element))
+            return true;
+
+        if (!IsNamed(element, "input"))
+            return false;
+
+        var value = element.GetAttribute("value") ?? string.Empty;
+        if (value.Length == 0)
+            return false;   // an empty value is only ever a `required` violation, handled above
+
+        var type = element.GetAttribute("type") ?? "text";
+        if (AsciiEquals(type, "email") && !IsWellFormedEmailAddress(value))
+            return true;
+        if (AsciiEquals(type, "url") && !Uri.IsWellFormedUriString(value.Trim(), UriKind.Absolute))
+            return true;
+
+        if (element.GetAttribute("pattern") is { Length: > 0 } pattern && !MatchesPatternAttribute(value, pattern))
+            return true;
+
+        return IsOutOfRange(element, type, value);
+    }
+
+    /// <summary>
+    /// Whether a required control has no value: the empty string for a text-like control, nothing
+    /// checked for a checkbox, no option with a non-empty value for a select.
+    /// <para>A radio button is never reported missing — the reference browser leaves an unchecked
+    /// required radio <c>:valid</c>, because the state belongs to the radio group rather than to
+    /// the one element.</para>
+    /// </summary>
+    private static bool IsValueMissing(DomElement element)
+    {
+        if (IsNamed(element, "textarea"))
+            return element.TextContent.Length == 0;
+
+        if (IsNamed(element, "select"))
+        {
+            return !element.Descendants().OfType<DomElement>().Any(option =>
+                IsNamed(option, "option")
+                && option.HasAttribute("selected")
+                && (option.GetAttribute("value") ?? option.TextContent).Length > 0);
+        }
+
+        if (!IsNamed(element, "input"))
+            return false;
+
+        if (element.GetAttribute("type") is { } type)
+        {
+            if (AsciiEquals(type, "radio"))
+                return false;
+            if (AsciiEquals(type, "checkbox"))
+                return !element.HasAttribute("checked");
+        }
+
+        return (element.GetAttribute("value") ?? string.Empty).Length == 0;
+    }
+
+    /// <summary>HTML's <c>pattern</c> attribute is anchored at both ends and matched against the
+    /// whole value. A pattern that does not compile is ignored (no violation), per §4.10.5.3.
+    /// </summary>
+    private static bool MatchesPatternAttribute(string value, string pattern)
+    {
+        try
+        {
+            return Regex.IsMatch(value, "^(?:" + pattern + ")$", RegexOptions.None, TimeSpan.FromMilliseconds(250));
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>The <c>min</c>/<c>max</c> underflow/overflow violations, for the numeric input
+    /// types whose values this static matcher can compare.</summary>
+    private static bool IsOutOfRange(DomElement element, string type, string value)
+    {
+        if (!AsciiEquals(type, "number") && !AsciiEquals(type, "range"))
+            return false;
+
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double number))
+            return AsciiEquals(type, "number");   // a non-numeric `type=number` value is a type mismatch
+
+        if (element.GetAttribute("min") is { } min
+            && double.TryParse(min, NumberStyles.Float, CultureInfo.InvariantCulture, out double minimum)
+            && number < minimum)
+            return true;
+
+        return element.GetAttribute("max") is { } max
+            && double.TryParse(max, NumberStyles.Float, CultureInfo.InvariantCulture, out double maximum)
+            && number > maximum;
+    }
+
+    /// <summary>HTML's <c>type=email</c> value sanity check — one <c>@</c> with a non-empty local
+    /// part and a dot-bearing domain. Deliberately looser than the spec's production: this decides
+    /// a paint colour, and a false <em>violation</em> is the visible failure.</summary>
+    private static bool IsWellFormedEmailAddress(string value)
+    {
+        int at = value.IndexOf('@');
+        if (at <= 0 || at != value.LastIndexOf('@') || at == value.Length - 1)
+            return false;
+
+        var domain = value[(at + 1)..];
+        return !domain.StartsWith('.') && !domain.EndsWith('.') && domain.Contains('.');
+    }
 
     // Every pseudo-class name the CSS/Selectors specs define as valid, plus the
     // four legacy single-colon pseudo-elements (:before/:after/:first-line/
