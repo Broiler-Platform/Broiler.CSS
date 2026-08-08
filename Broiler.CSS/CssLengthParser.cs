@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 
 namespace Broiler.CSS;
@@ -14,6 +15,70 @@ namespace Broiler.CSS;
 public static class CssLengthParser
 {
     private readonly record struct LengthEvaluation(double Pixels, bool IsUnitless);
+
+    /// <summary>
+    /// Whether this thread has been through <see cref="SetViewportSize(float, float, string?)"/>.
+    /// </summary>
+    /// <remarks>
+    /// The read-side half of the P0-c ambient-state contract, which
+    /// <c>Broiler.Layout.AmbientRenderState</c> owns the other half of. It lives
+    /// here rather than there because the eight factors below are
+    /// <c>[ThreadStatic]</c> in this assembly and Broiler.CSS cannot reference
+    /// Broiler.Layout — the dependency runs the other way. What it buys: a worker
+    /// thread that never established the viewport reads every factor as zero, so
+    /// every <c>vh</c>/<c>vw</c> length silently becomes zero and the render is
+    /// wrong in a way that looks like a layout bug. Recording the write here lets
+    /// a thread that calls <see cref="SetViewportSize(float, float, string?)"/>
+    /// directly — which <c>HtmlContainerInt.PerformLayout</c> does — be credited
+    /// for it, which is the gap that kept this slot uninstrumented.
+    /// </remarks>
+    [ThreadStatic]
+    private static bool _viewportEstablished;
+
+    [ThreadStatic]
+    private static bool _enforceViewportAssertion;
+
+    /// <summary>True when this thread has set the viewport size.</summary>
+    public static bool ViewportEstablishedOnThisThread => _viewportEstablished;
+
+    /// <summary>
+    /// Arms the debug-mode check below for the calling thread. Thread-scoped for the
+    /// same reason <c>AmbientRenderState.EnforceOnThisThread</c> is: a process-wide
+    /// switch armed by one test would fire inside whatever layout test runs beside it.
+    /// </summary>
+    public static bool EnforceViewportAssertion
+    {
+        get => _enforceViewportAssertion;
+        set => _enforceViewportAssertion = value;
+    }
+
+    /// <summary>
+    /// Forgets that this thread established the viewport, so a pooled thread does
+    /// not vouch for the previous document's dimensions. Deliberately leaves the
+    /// factors alone: zeroing them would turn a stale read into a zero read, which
+    /// is equally wrong and harder to recognise.
+    /// </summary>
+    public static void ClearViewportEstablishedRecord() => _viewportEstablished = false;
+
+    private static double ViewportFactor(double factor, string unit)
+    {
+        AssertViewportEstablished(unit);
+        return factor;
+    }
+
+    [Conditional("DEBUG")]
+    private static void AssertViewportEstablished(string unit)
+    {
+        if (!_enforceViewportAssertion || _viewportEstablished)
+            return;
+
+        throw new InvalidOperationException(
+            $"A '{unit}' length was resolved on thread {Environment.CurrentManagedThreadId}, which "
+            + "never called CssLengthParser.SetViewportSize — every viewport-relative length on this "
+            + "thread is resolving against a zero viewport. A thread that runs layout or paint must "
+            + "call AmbientRenderState.Establish first; see "
+            + "docs/architecture/multithreading-static-state.md.");
+    }
 
     /// <summary>Pre-computed factor for 1vh (viewport height / 100).</summary>
     [ThreadStatic]
@@ -117,6 +182,8 @@ public static class CssLengthParser
             _viFactor = _vwFactor;
             _vbFactor = _vhFactor;
         }
+
+        _viewportEstablished = true;
     }
 
     /// <summary>
@@ -326,15 +393,15 @@ public static class CssLengthParser
         CssConstants.Pc => CssMetrics.PxPerPica,
         CssConstants.Q => CssMetrics.PxPerQ,
         // CSS Values 3 §5.1.2: viewport-relative units (1% of the axis).
-        CssConstants.Vh => _vhFactor,
-        CssConstants.Vw => _vwFactor,
-        CssConstants.Vmin => _vminFactor,
-        CssConstants.Vmax => _vmaxFactor,
+        CssConstants.Vh => ViewportFactor(_vhFactor, CssConstants.Vh),
+        CssConstants.Vw => ViewportFactor(_vwFactor, CssConstants.Vw),
+        CssConstants.Vmin => ViewportFactor(_vminFactor, CssConstants.Vmin),
+        CssConstants.Vmax => ViewportFactor(_vmaxFactor, CssConstants.Vmax),
         // CSS Values 4 §6.1.4: the logical viewport units. GetUnit canonicalises
         // the small/large/dynamic variants (svb, lvb, dvb, …) onto these, so the
         // table stays six entries wide.
-        CssConstants.Vi => _viFactor,
-        CssConstants.Vb => _vbFactor,
+        CssConstants.Vi => ViewportFactor(_viFactor, CssConstants.Vi),
+        CssConstants.Vb => ViewportFactor(_vbFactor, CssConstants.Vb),
         _ => double.NaN,
     };
 
