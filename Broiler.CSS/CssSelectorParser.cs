@@ -227,6 +227,187 @@ public static class CssSelectorParser
         return index;
     }
 
+    /// <summary>
+    /// The <em>key</em> of a complex selector: a simple selector its subject element must carry
+    /// for the selector to have any chance of matching. This is what lets a cascade bucket rules
+    /// by their rightmost simple selector and test only the handful an element could match,
+    /// instead of every rule of every sheet (multithreading roadmap item #11).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The key comes from the <em>rightmost</em> compound, because that is the compound the
+    /// subject element itself has to satisfy — everything to its left constrains ancestors and
+    /// siblings. <c>#main .row > td.cell:hover</c> keys on class <c>cell</c>: an element without
+    /// that class cannot match, whatever its ancestry.
+    /// </para>
+    /// <para>
+    /// <b>The contract is one-sided and that is the whole safety argument.</b> A key is a
+    /// <em>necessary</em> condition, never a sufficient one — a keyed rule is a candidate that
+    /// still goes through the full matcher. So the only way this can be wrong is by returning a
+    /// key an element lacks for a selector that would have matched it, and every case that is not
+    /// certainly narrower resolves to <see cref="CssSelectorKeyKind.Universal"/>: a bare
+    /// <c>:is(…)</c>/<c>:not(…)</c>, an attribute-only compound, a namespaced type, an escaped
+    /// identifier, or anything this scanner does not recognise. Losing selectivity costs time;
+    /// losing a rule loses the page.
+    /// </para>
+    /// <para>
+    /// Within one compound an id beats a class beats a type, which is simply the order of how
+    /// much each one narrows the candidate set.
+    /// </para>
+    /// </remarks>
+    public static CssSelectorKey GetKey(string? selector)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+            return CssSelectorKey.Universal;
+
+        string? rightmost = null;
+        foreach (var compound in SplitCompounds(selector))
+            rightmost = compound;
+
+        return rightmost is null ? CssSelectorKey.Universal : KeyOfCompound(rightmost);
+    }
+
+    private static CssSelectorKey KeyOfCompound(string compound)
+    {
+        // An escaped identifier would have to be unescaped to compare against a DOM value, and a
+        // namespaced type (`svg|rect`) is not the plain tag name a bucket is keyed on. Both are
+        // rare; neither is worth a subtle bug.
+        if (compound.IndexOf('\\') >= 0 || compound.IndexOf('|') >= 0)
+            return CssSelectorKey.Universal;
+
+        string? id = null;
+        string? className = null;
+        string? tag = null;
+        var index = 0;
+
+        if (index < compound.Length && IsNameStart(compound[index]))
+        {
+            var end = ConsumeName(compound, index);
+            tag = compound[index..end];
+            index = end;
+        }
+        else if (index < compound.Length && compound[index] == '*')
+        {
+            index++;
+        }
+
+        while (index < compound.Length)
+        {
+            switch (compound[index])
+            {
+                case '#':
+                {
+                    var end = ConsumeName(compound, index + 1);
+                    if (end == index + 1)
+                        return CssSelectorKey.Universal;
+                    id ??= compound[(index + 1)..end];
+                    index = end;
+                    break;
+                }
+
+                case '.':
+                {
+                    var end = ConsumeName(compound, index + 1);
+                    if (end == index + 1)
+                        return CssSelectorKey.Universal;
+                    className ??= compound[(index + 1)..end];
+                    index = end;
+                    break;
+                }
+
+                case '[':
+                {
+                    // An attribute filter narrows nothing this index can key on, but it also does
+                    // not widen the compound — skip it and keep whatever id/class/type it sits on.
+                    var end = SkipBalanced(compound, index, '[', ']');
+                    if (end <= index)
+                        return CssSelectorKey.Universal;
+                    index = end;
+                    break;
+                }
+
+                case ':':
+                {
+                    // Same for a pseudo-class or pseudo-element: `td.cell:hover` and
+                    // `div::before` still require the td/div they are attached to. A functional
+                    // pseudo's argument is skipped wholesale — a key from inside `:not(...)` would
+                    // be exactly backwards, and one from inside `:is(...)` holds only if every
+                    // branch agrees, which is not worth deciding here.
+                    index++;
+                    if (index < compound.Length && compound[index] == ':')
+                        index++;
+
+                    var end = ConsumeName(compound, index);
+                    if (end == index)
+                        return CssSelectorKey.Universal;
+                    index = end;
+
+                    if (index < compound.Length && compound[index] == '(')
+                    {
+                        var close = SkipBalanced(compound, index, '(', ')');
+                        if (close <= index)
+                            return CssSelectorKey.Universal;
+                        index = close;
+                    }
+
+                    break;
+                }
+
+                default:
+                    // Something this scanner does not model; assume it could match anything.
+                    return CssSelectorKey.Universal;
+            }
+        }
+
+        if (id is not null)
+            return new CssSelectorKey(CssSelectorKeyKind.Id, id);
+        if (className is not null)
+            return new CssSelectorKey(CssSelectorKeyKind.Class, className);
+        if (tag is not null)
+            return new CssSelectorKey(CssSelectorKeyKind.Type, tag);
+
+        return CssSelectorKey.Universal;
+    }
+
+    /// <summary>Index just past the <paramref name="close"/> matching the <paramref name="open"/>
+    /// at <paramref name="index"/>, or <paramref name="index"/> when it is unbalanced.</summary>
+    private static int SkipBalanced(string text, int index, char open, char close)
+    {
+        var depth = 0;
+        char quote = '\0';
+        for (var i = index; i < text.Length; i++)
+        {
+            var character = text[i];
+            if (quote != '\0')
+            {
+                if (character == '\\')
+                    i++;
+                else if (character == quote)
+                    quote = '\0';
+                continue;
+            }
+
+            if (character is '"' or '\'')
+            {
+                quote = character;
+                continue;
+            }
+
+            if (character == open)
+            {
+                depth++;
+            }
+            else if (character == close)
+            {
+                depth--;
+                if (depth == 0)
+                    return i + 1;
+            }
+        }
+
+        return index;
+    }
+
     private static bool IsNameStart(char character) =>
         char.IsLetter(character) || character is '_' or '-' || character >= 0x80;
 

@@ -56,6 +56,14 @@ public sealed partial class CssStyleEngine
     // stylesheet re-sync (host callback during selector matching, see the _sheets
     // snapshot note in GetCascadedDeclarationMap) can never store a stale entry.
     private int _cacheGeneration;
+    // Bumped only when the *stylesheets* or the environment change — never by a DOM mutation.
+    // The rule index is a function of the sheets alone, and _cacheGeneration is bumped on every
+    // mutation, so keying the index on that would rebuild it constantly for no reason.
+    private int _sheetGeneration;
+    // The cascade rule index for _sheetGeneration, built on first use (multithreading roadmap
+    // item #11). Immutable once built, so a cascade can hold it while the engine re-syncs.
+    private CssCascadeRuleIndex? _ruleIndex;
+    private int _ruleIndexGeneration = -1;
     private readonly HashSet<DomDocument> _observedDocuments = [];
     private CssEnvironment _environment = CssEnvironment.Headless;
     // Host-supplied override for an element's inline declaration block. The HtmlBridge
@@ -96,6 +104,7 @@ public sealed partial class CssStyleEngine
         lock (_sync)
         {
             _sheets.Add(new StyleSheetEntry(sheet, origin));
+            _sheetGeneration++;
             InvalidateAll();
         }
     }
@@ -108,6 +117,7 @@ public sealed partial class CssStyleEngine
             if (_sheets.Count == 0)
                 return;
             _sheets.Clear();
+            _sheetGeneration++;
             InvalidateAll();
         }
     }
@@ -121,6 +131,8 @@ public sealed partial class CssStyleEngine
         if (_environment.Equals(environment))
             return;
         _environment = environment;
+        lock (_sync)
+            _sheetGeneration++;
         InvalidateAll();
     }
 
@@ -574,18 +586,40 @@ public sealed partial class CssStyleEngine
         // and crash-free, and the generation captured alongside it lets the store below reject a
         // result that raced an invalidation.
         int generation;
+        CssCascadeRuleIndex? ruleIndex;
         StyleSheetEntry[] sheetsSnapshot;
         lock (_sync)
         {
             generation = _cacheGeneration;
-            sheetsSnapshot = _sheets.ToArray();
+            ruleIndex = UseRuleIndex ? GetOrBuildRuleIndex() : null;
+            sheetsSnapshot = ruleIndex is null ? _sheets.ToArray() : [];
         }
 
         var winners = new Dictionary<string, CascadeSlot>(StringComparer.OrdinalIgnoreCase);
         var order = 0;
 
-        foreach (var entry in sheetsSnapshot)
-            CollectFromRules(entry.Sheet.Rules, entry.Origin, element, pseudoElement, winners, ref order);
+        if (ruleIndex is not null)
+        {
+            // Only the rules whose key this element carries, in document order (roadmap item #11).
+            var candidates = new List<int>();
+            ruleIndex.CollectCandidates(element, candidates);
+            foreach (var candidate in candidates)
+            {
+                var entry = ruleIndex[candidate];
+                if (entry.ContainerConditions is { } conditions &&
+                    !ContainerConditionsHold(conditions, element, pseudoElement))
+                {
+                    continue;
+                }
+
+                ApplyStyleRule(entry.Rule, entry.Origin, element, pseudoElement, winners, ref order);
+            }
+        }
+        else
+        {
+            foreach (var entry in sheetsSnapshot)
+                CollectFromRules(entry.Sheet.Rules, entry.Origin, element, pseudoElement, winners, ref order);
+        }
 
         if (includeInlineStyle && pseudoElement is null)
         {
@@ -618,6 +652,67 @@ public sealed partial class CssStyleEngine
         }
 
         return map;
+    }
+
+    /// <summary>
+    /// Selects the cascade's rule-selection strategy. True — the default, and the only value
+    /// production uses — buckets rules by their key and tests the candidates
+    /// (<see cref="CssCascadeRuleIndex"/>); false restores the linear scan of every rule of every
+    /// sheet the index replaced.
+    /// </summary>
+    /// <remarks>
+    /// The linear scan is kept, and kept reachable, as the index's oracle: an optimisation whose
+    /// claim is "same answers, less work" is only worth trusting if the old answers can still be
+    /// produced and compared against. <c>CssCascadeRuleIndexTests</c> does exactly that over
+    /// generated documents and sheets.
+    /// </remarks>
+    internal bool UseRuleIndex { get; set; } = true;
+
+    /// <summary>
+    /// The rule index for the current sheet set, built on first use after a sheet/environment
+    /// change. Multithreading roadmap item #11.
+    /// </summary>
+    /// <remarks>
+    /// Called with <see cref="_sync"/> held, and returns an immutable index the caller keeps using
+    /// outside the lock — the same discipline the sheet snapshot it replaced had, and for the same
+    /// reason: selector matching can call back into the host, which may re-sync this engine's
+    /// stylesheets mid-cascade. A cascade that started against one index finishes against it, and
+    /// the generation guard at the end refuses to memoize a result that raced the change.
+    /// </remarks>
+    private CssCascadeRuleIndex GetOrBuildRuleIndex()
+    {
+        if (_ruleIndex is { } current && _ruleIndexGeneration == _sheetGeneration)
+            return current;
+
+        var sheets = new List<(CssStyleSheet Sheet, CssOrigin Origin)>(_sheets.Count);
+        foreach (var entry in _sheets)
+            sheets.Add((entry.Sheet, entry.Origin));
+
+        var viewportWidth = _environment.ViewportWidth;
+        var viewportHeight = _environment.ViewportHeight;
+
+        _ruleIndex = CssCascadeRuleIndex.Build(
+            sheets,
+            prelude => EvaluateMediaQuery(prelude, viewportWidth, viewportHeight),
+            prelude => SupportsConditionSyntax.EvaluatesTrue(prelude, IsFeatureQuerySupported));
+        _ruleIndexGeneration = _sheetGeneration;
+        return _ruleIndex;
+    }
+
+    /// <summary>
+    /// True when every <c>@container</c> group enclosing a candidate rule holds for this element.
+    /// These are the conditions the index could not decide at build time, because they depend on
+    /// the element's query container rather than on the environment.
+    /// </summary>
+    private bool ContainerConditionsHold(CssAtRule[] conditions, DomElement element, string? pseudoElement)
+    {
+        foreach (var condition in conditions)
+        {
+            if (!EvaluateContainerQuery(condition.Prelude, element, pseudoElement))
+                return false;
+        }
+
+        return true;
     }
 
     private void CollectFromRules(
