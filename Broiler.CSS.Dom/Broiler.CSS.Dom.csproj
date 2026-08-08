@@ -16,4 +16,8 @@
     <ProjectReference Include="$(BroilerDomPath)" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Broiler.CSS.Dom.Tests" />
+  </ItemGroup>
+
 </Project>
