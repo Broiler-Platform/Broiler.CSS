@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Broiler.Dom;
@@ -23,26 +24,38 @@ namespace Broiler.CSS.Dom;
 public sealed partial class CssStyleEngine
 {
     private readonly CssSelectorMatcher _matcher;
-    // Guards every mutable field below (_sheets, the three memo caches, _observedDocuments,
-    // _registrations, _cacheGeneration). The engine is re-entered concurrently: the HtmlBridge's
-    // GetComputedProps routes through this engine's sparse projection, and JS continuations
-    // dispatched on ThreadPool threads run that computed-style/geometry work concurrently with the
-    // main-thread layout pass — a plain Dictionary/List corrupts under that race and aborts the
-    // process ("non-concurrent collections must have exclusive access", WPT #1445; the sibling
-    // bridge memo maps were made concurrent for the same reason in #1143). Critical sections are
-    // kept tight and NEVER span the cascade computation, which calls back into the host (selector
-    // matching → DOM bridge → re-sync of this engine's stylesheets); holding the lock across that
-    // re-entrant callback is unnecessary (Monitor is reentrant per-thread) and would widen the
-    // critical section for no benefit. Stylesheet snapshots + the cache-store generation guard make
-    // the lock-free compute window self-consistent.
+    // Guards the fields that are read-modify-written as a unit — _sheets, _observedDocuments,
+    // _registrations, _cacheGeneration, _sheetGeneration, and the rule index. The engine is
+    // re-entered concurrently: the HtmlBridge's GetComputedProps routes through this engine's
+    // sparse projection, and JS continuations dispatched on ThreadPool threads run that
+    // computed-style/geometry work concurrently with the main-thread layout pass — a plain
+    // Dictionary/List corrupts under that race and aborts the process ("non-concurrent collections
+    // must have exclusive access", WPT #1445; the sibling bridge memo maps were made concurrent for
+    // the same reason in #1143). Critical sections are kept tight and NEVER span the cascade
+    // computation, which calls back into the host (selector matching → DOM bridge → re-sync of this
+    // engine's stylesheets); holding the lock across that re-entrant callback is unnecessary
+    // (Monitor is reentrant per-thread) and would widen the critical section for no benefit.
+    // Stylesheet snapshots + the cache-store generation guard make the lock-free compute window
+    // self-consistent.
+    //
+    // The four memo caches below are NOT under this lock any more (multithreading item #12,
+    // "shard the caches"). They were, and that made every cache probe on the cascade's hot path a
+    // Monitor acquire — tolerable when one thread cascades, and the whole cost of the exercise once
+    // N threads do, because a probe is the shortest possible critical section and therefore the one
+    // with the worst work-to-synchronisation ratio. ConcurrentDictionary is the sharding the
+    // roadmap asks for: per-bucket locks on write, lock-free reads. What did NOT change is the
+    // generation-guard protocol — a cascade still captures _cacheGeneration up front and the store
+    // still happens under _sync so that "is this result still current" and "publish it" cannot be
+    // split by a concurrent InvalidateAll. That guard is what makes the lock-free compute window
+    // correct, so it survives the change deliberately rather than by omission.
     private readonly object _sync = new();
     private readonly List<StyleSheetEntry> _sheets = [];
-    private readonly Dictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = [];
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = new();
     // Sparse computed-style memo: the specified + sparse-inheritance projection (no
     // initial-value backfill) that the HtmlBridge's GetComputedProps consumes. Keyed by
     // element (principal box; pseudo-elements are not on this recursion). Cleared with
     // _cache in InvalidateAll, so it shares the exact same correctness lifecycle.
-    private readonly Dictionary<(DomElement Element, string? Pseudo), IReadOnlyDictionary<string, string>> _sparseCache = [];
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo), IReadOnlyDictionary<string, string>> _sparseCache = new();
     // Memoizes the declared cascade winners (stylesheets + optional inline) per
     // (element, pseudo, includeInline). The declared cascade is the hot inner step
     // shared by every GetComputedStyle/GetCascadedStyle/GetCascadedDeclaredValues
@@ -50,7 +63,16 @@ public sealed partial class CssStyleEngine
     // unlike the computed-style _cache, was previously recomputed from scratch each
     // time (linear selector scan of every UA + author rule). Cleared alongside
     // _cache in InvalidateAll, so it shares the exact same correctness lifecycle.
-    private readonly Dictionary<(DomElement Element, string? Pseudo, bool IncludeInline), IReadOnlyDictionary<string, string>> _declaredCascadeCache = [];
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, bool IncludeInline), IReadOnlyDictionary<string, string>> _declaredCascadeCache = [];
+    // Memoizes the renderer-facing cascade projection — GetCascadedStyle's whole result, not just
+    // the declared winners _declaredCascadeCache holds. Everything between the two (custom-property
+    // and var() resolution, CSS-wide keywords, shorthand expansion, attr() substitution, relative
+    // font-weight) was recomputed on every call, and one render calls it once per box, so within a
+    // single render this memo saves nothing by itself. It exists as the *store* item #12's warm pass
+    // writes into: the renderer resolves every element's cascade on N threads before the box walk,
+    // and the box walk then reads results instead of computing them. Same lifecycle and same
+    // generation guard as the sibling caches. The returned map is shared and read-only to callers.
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, bool IncludeInline), IReadOnlyDictionary<string, string>> _cascadedStyleCache = [];
     // Bumped by InvalidateAll; a declared-cascade computation captures it up front and
     // only memoizes its result if it is unchanged at the end, so a mid-cascade
     // stylesheet re-sync (host callback during selector matching, see the _sheets
@@ -175,20 +197,16 @@ public sealed partial class CssStyleEngine
 
         var normalizedPseudo = NormalizePseudoElement(pseudoElement);
         var key = (element, normalizedPseudo);
-        lock (_sync)
-        {
-            if (_cache.TryGetValue(key, out var cached))
-                return cached;
-        }
+        if (_cache.TryGetValue(key, out var cached))
+            return cached;
 
-        // Computed outside the lock: ComputeStyle re-enters the host (selector matching → DOM
+        // Computed outside any lock: ComputeStyle re-enters the host (selector matching → DOM
         // bridge) which may mutate this engine's stylesheets, and it recurses into the ancestor
         // chain. A benign race where two threads compute the same key both store a valid snapshot
         // (last writer wins); it never corrupts the cache.
         var computed = ComputeStyle(element, normalizedPseudo, []);
         var snapshot = new CssComputedStyle(computed);
-        lock (_sync)
-            _cache[key] = snapshot;
+        _cache[key] = snapshot;
         return snapshot;
     }
 
@@ -292,11 +310,27 @@ public sealed partial class CssStyleEngine
             return EmptyReadOnlyMap;
 
         ObserveDocument(element);
-        return ComputeCascadedStyle(
-            element,
-            NormalizePseudoElement(pseudoElement),
-            [],
-            includeInlineStyle);
+
+        var key = (element, NormalizePseudoElement(pseudoElement), includeInlineStyle);
+        if (_cascadedStyleCache.TryGetValue(key, out var cached))
+            return cached;
+
+        int generation;
+        lock (_sync)
+            generation = _cacheGeneration;
+
+        var computed = ComputeCascadedStyle(key.Item1, key.Item2, [], key.includeInlineStyle);
+
+        // Same guard as GetCascadedDeclarationMap, and for the same reason: selector matching can
+        // call back into the host mid-cascade and re-sync the stylesheets, so a result derived from
+        // the pre-re-sync sheets must not be published.
+        lock (_sync)
+        {
+            if (generation == _cacheGeneration)
+                _cascadedStyleCache[key] = computed;
+        }
+
+        return computed;
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyReadOnlyMap =
@@ -427,16 +461,12 @@ public sealed partial class CssStyleEngine
     private CssComputedStyle GetComputedStyleInternal(DomElement element, HashSet<DomElement> ancestorsInProgress)
     {
         var key = ((DomElement, string?))(element, null);
-        lock (_sync)
-        {
-            if (_cache.TryGetValue(key, out var cached))
-                return cached;
-        }
+        if (_cache.TryGetValue(key, out var cached))
+            return cached;
 
         var computed = ComputeStyle(element, pseudoElement: null, ancestorsInProgress);
         var snapshot = new CssComputedStyle(computed);
-        lock (_sync)
-            _cache[key] = snapshot;
+        _cache[key] = snapshot;
         return snapshot;
     }
 
@@ -447,17 +477,13 @@ public sealed partial class CssStyleEngine
         DomElement element, HashSet<DomElement> ancestorsInProgress)
     {
         var key = ((DomElement, string?))(element, null);
-        lock (_sync)
-        {
-            if (_sparseCache.TryGetValue(key, out var cached))
-                return cached;
-        }
+        if (_sparseCache.TryGetValue(key, out var cached))
+            return cached;
 
         IReadOnlyDictionary<string, string> computed = ComputeStyle(
             element, pseudoElement: null, ancestorsInProgress,
             backfillInitials: false, sparseInheritance: true);
-        lock (_sync)
-            _sparseCache[key] = computed;
+        _sparseCache[key] = computed;
         return computed;
     }
 
@@ -570,11 +596,8 @@ public sealed partial class CssStyleEngine
         bool includeInlineStyle)
     {
         var key = (element, pseudoElement, includeInlineStyle);
-        lock (_sync)
-        {
-            if (_declaredCascadeCache.TryGetValue(key, out var cached))
-                return cached;
-        }
+        if (_declaredCascadeCache.TryGetValue(key, out var cached))
+            return cached;
 
         // Snapshot the sheet list and cache generation together under the lock before iterating:
         // selector matching (below) can call back into the host (e.g. the DOM bridge) which may

@@ -513,18 +513,23 @@ public sealed partial class CssStyleEngine
 
     private void InvalidateAll()
     {
-        // All mutable state is touched under _sync (reentrant: callers such as AddStyleSheet already
-        // hold it). Bump first: a declared-cascade computation in flight captured the prior
-        // generation and will decline to memoize its (now-stale) result.
+        // The generation bump and _registrations reset are under _sync (reentrant: callers such as
+        // AddStyleSheet already hold it). Bump first, inside the lock, and clear the memos inside
+        // it too: the caches are concurrent now and would not need the lock for their own sake,
+        // but the generation-guarded stores in GetCascadedStyle / GetCascadedDeclarationMap
+        // compare and publish under this same lock, and a clear that slipped between their
+        // compare and their store would leave a stale entry behind for good.
         lock (_sync)
         {
             _cacheGeneration++;
             _registrations = null;
-            if (_cache.Count > 0)
+            if (!_cache.IsEmpty)
                 _cache.Clear();
-            if (_declaredCascadeCache.Count > 0)
+            if (!_declaredCascadeCache.IsEmpty)
                 _declaredCascadeCache.Clear();
-            if (_sparseCache.Count > 0)
+            if (!_cascadedStyleCache.IsEmpty)
+                _cascadedStyleCache.Clear();
+            if (!_sparseCache.IsEmpty)
                 _sparseCache.Clear();
         }
     }
