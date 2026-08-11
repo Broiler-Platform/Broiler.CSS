@@ -1386,12 +1386,20 @@ public sealed partial class CssStyleEngine
         Invalid,
     }
 
-    /// <summary>Whether a feature was written in its plain, <c>min-</c> or <c>max-</c> form.</summary>
+    /// <summary>
+    /// The comparison a feature term asks for. <c>Plain</c> is the legacy
+    /// <c>(feature: value)</c> equality (and, with no value, the boolean context);
+    /// <c>Min</c>/<c>Max</c> are the legacy <c>min-</c>/<c>max-</c> prefixes, which
+    /// are inclusive. Media Queries 4 §2.4 adds the strict comparisons, which have
+    /// no prefixed spelling — <c>(width &gt; 0px)</c> is not <c>(min-width: 0px)</c>.
+    /// </summary>
     private enum MediaFeatureRange
     {
         Plain,
         Min,
         Max,
+        GreaterThan,
+        LessThan,
     }
 
     // Idents the Media Queries grammar excludes from <media-type>. The boolean
@@ -1402,7 +1410,11 @@ public sealed partial class CssStyleEngine
     private static readonly string[] ReservedMediaTypeIdents =
         ["only", "not", "and", "or", "layer"];
 
-    private static bool EvaluateMediaQuery(string query, int viewportWidth, int viewportHeight)
+    private static bool EvaluateMediaQuery(
+        string query,
+        int viewportWidth,
+        int viewportHeight,
+        CustomMediaRegistry? customMedia = null)
     {
         // An empty <media-query-list> is equivalent to `all` and always matches:
         // `@media { … }` (whitespace after the at-keyword is optional) and
@@ -1412,13 +1424,18 @@ public sealed partial class CssStyleEngine
 
         foreach (var q in CssSyntax.SplitTopLevel(query, ','))
         {
-            if (EvaluateSingleMediaQuery(q, viewportWidth, viewportHeight) == MediaMatch.Match)
+            if (EvaluateSingleMediaQuery(q, viewportWidth, viewportHeight, customMedia) == MediaMatch.Match)
                 return true;
         }
         return false;
     }
 
-    private static MediaMatch EvaluateSingleMediaQuery(string query, int viewportWidth, int viewportHeight)
+    private static MediaMatch EvaluateSingleMediaQuery(
+        string query,
+        int viewportWidth,
+        int viewportHeight,
+        CustomMediaRegistry? customMedia = null,
+        HashSet<string>? resolving = null)
     {
         var q = query.Trim();
 
@@ -1452,7 +1469,8 @@ public sealed partial class CssStyleEngine
             {
                 if (i == 0 && requireMediaType)
                     return MediaMatch.Invalid;
-                term = EvaluateMediaCondition(p[1..^1].Trim(), viewportWidth, viewportHeight);
+                term = EvaluateMediaCondition(
+                    p[1..^1].Trim(), viewportWidth, viewportHeight, customMedia, resolving);
             }
             else if (i == 0)
             {
@@ -1537,8 +1555,43 @@ public sealed partial class CssStyleEngine
         return parts;
     }
 
-    private static MediaMatch EvaluateMediaCondition(string condition, int viewportWidth, int viewportHeight)
+    private static MediaMatch EvaluateMediaCondition(
+        string condition,
+        int viewportWidth,
+        int viewportHeight,
+        CustomMediaRegistry? customMedia,
+        HashSet<string>? resolving = null)
     {
+        // Media Queries 5 §3: `(--name)` is a <custom-media-query> reference,
+        // substituted by the <media-query-list> its `@custom-media` rule stored.
+        // Checked before anything else because a custom media name is a valid
+        // <ident> and would otherwise fall through to <general-enclosed>.
+        var reference = condition.Trim();
+        if (reference.StartsWith("--", StringComparison.Ordinal))
+            return EvaluateCustomMediaReference(reference, viewportWidth, viewportHeight, customMedia, resolving);
+
+        // Media Queries 4 §2.4 range syntax: `(width > 0px)`, `(400px <= width)`,
+        // `(400px < width < 800px)`. Tried before the legacy `name: value` split so
+        // a `<` / `>` / `=` term is never mistaken for a malformed plain feature.
+        if (TryParseRangeCondition(condition, out var rangeName, out var bounds))
+        {
+            // A comparison was present but did not form a valid <mf-range>.
+            if (bounds.Count == 0)
+                return MediaMatch.Invalid;
+
+            var result = MediaMatch.Match;
+            foreach (var (boundRange, boundValue) in bounds)
+            {
+                var term = EvaluateMediaFeature(
+                    rangeName, boundValue, boundRange, viewportWidth, viewportHeight);
+                if (term == MediaMatch.Invalid)
+                    return MediaMatch.Invalid;
+                if (term == MediaMatch.NoMatch)
+                    result = MediaMatch.NoMatch;
+            }
+            return result;
+        }
+
         var colonIdx = condition.IndexOf(':');
         string name;
         string? value = null;
@@ -1583,6 +1636,22 @@ public sealed partial class CssStyleEngine
         if (webkit && name != "device-pixel-ratio")
             return MediaMatch.Invalid;
 
+        return EvaluateMediaFeature(name, value, range, viewportWidth, viewportHeight);
+    }
+
+    /// <summary>
+    /// Evaluates one <c>&lt;mf-name&gt;</c> against the device, with the comparison the
+    /// term asked for. Shared by the legacy <c>(name: value)</c> / <c>min-</c> / <c>max-</c>
+    /// spellings and by the Media Queries 4 range syntax, so a feature is described in
+    /// exactly one place whichever way the query was written.
+    /// </summary>
+    private static MediaMatch EvaluateMediaFeature(
+        string name,
+        string? value,
+        MediaFeatureRange range,
+        int viewportWidth,
+        int viewportHeight)
+    {
         var aspectRatio = viewportHeight > 0 ? (double)viewportWidth / viewportHeight : 0;
 
         switch (name)
@@ -1677,6 +1746,234 @@ public sealed partial class CssStyleEngine
 
     private static MediaMatch Matched(bool matches) => matches ? MediaMatch.Match : MediaMatch.NoMatch;
 
+    // ---- Media Queries 4 range syntax --------------------------------------
+
+    /// <summary>
+    /// Parses a <c>&lt;mf-range&gt;</c> (Media Queries 4 §2.4) into the feature name and the
+    /// one or two bounds it asserts. Returns <see langword="false"/> when the condition holds
+    /// no top-level comparison operator at all, which means it is a legacy
+    /// <c>(name)</c>/<c>(name: value)</c> term for the caller to parse instead.
+    /// <para>
+    /// A condition that <em>does</em> carry an operator but does not form a valid range —
+    /// three operators, a non-ident where the feature name belongs, mismatched directions
+    /// in the two-sided form — yields <see langword="true"/> with an empty
+    /// <paramref name="bounds"/>: it is malformed, not legacy, and the caller must not fall
+    /// back to a parse that would read `width>0px` as the feature name `width>0px`.
+    /// </para>
+    /// </summary>
+    private static bool TryParseRangeCondition(
+        string condition,
+        out string name,
+        out List<(MediaFeatureRange Range, string Value)> bounds)
+    {
+        name = string.Empty;
+        bounds = [];
+
+        var operators = new List<(int Start, int Length, MediaFeatureRange Range)>();
+        var depth = 0;
+        for (var i = 0; i < condition.Length; i++)
+        {
+            var c = condition[i];
+            if (c == '(') { depth++; continue; }
+            if (c == ')') { depth--; continue; }
+            if (depth != 0)
+                continue;
+
+            if (c is '<' or '>')
+            {
+                var inclusive = i + 1 < condition.Length && condition[i + 1] == '=';
+                operators.Add((
+                    i,
+                    inclusive ? 2 : 1,
+                    c == '<'
+                        ? (inclusive ? MediaFeatureRange.Max : MediaFeatureRange.LessThan)
+                        : (inclusive ? MediaFeatureRange.Min : MediaFeatureRange.GreaterThan)));
+                if (inclusive)
+                    i++;
+            }
+            else if (c == '=')
+            {
+                operators.Add((i, 1, MediaFeatureRange.Plain));
+            }
+        }
+
+        if (operators.Count == 0)
+            return false;
+        if (operators.Count > 2)
+            return true; // malformed, and definitely not a legacy term
+
+        // Split the condition on the operators into 2 or 3 operands.
+        var operands = new List<string>();
+        var cursor = 0;
+        foreach (var (start, length, _) in operators)
+        {
+            operands.Add(condition[cursor..start].Trim());
+            cursor = start + length;
+        }
+        operands.Add(condition[cursor..].Trim());
+
+        if (operators.Count == 1)
+        {
+            var (left, right) = (operands[0], operands[1]);
+            if (left.Length == 0 || right.Length == 0)
+                return true;
+
+            // `<mf-name> <op> <mf-value>` as written; `<mf-value> <op> <mf-name>`
+            // asserts the same thing about the feature with the comparison reversed.
+            if (IsMediaFeatureName(left))
+                bounds.Add((operators[0].Range, right));
+            else if (IsMediaFeatureName(right))
+                bounds.Add((FlipComparison(operators[0].Range), left));
+            else
+                return true;
+
+            name = (IsMediaFeatureName(left) ? left : right).ToLowerInvariant();
+            return true;
+        }
+
+        // Two-sided: `<value> <lt> <name> <lt> <value>` or the `<gt>` form. Both
+        // operators must point the same way — `(1px < width > 2px)` is malformed.
+        var middle = operands[1];
+        if (!IsMediaFeatureName(middle) || operands[0].Length == 0 || operands[2].Length == 0)
+            return true;
+
+        bool firstIsLess = operators[0].Range is MediaFeatureRange.LessThan or MediaFeatureRange.Max;
+        bool secondIsLess = operators[1].Range is MediaFeatureRange.LessThan or MediaFeatureRange.Max;
+        if (firstIsLess != secondIsLess
+            || operators[0].Range == MediaFeatureRange.Plain
+            || operators[1].Range == MediaFeatureRange.Plain)
+        {
+            return true;
+        }
+
+        name = middle.ToLowerInvariant();
+        bounds.Add((FlipComparison(operators[0].Range), operands[0]));
+        bounds.Add((operators[1].Range, operands[2]));
+        return true;
+    }
+
+    /// <summary>
+    /// The comparison that asserts the same thing when the feature moves from the right
+    /// of the operator to the left: <c>100px &lt; width</c> is <c>width &gt; 100px</c>.
+    /// </summary>
+    private static MediaFeatureRange FlipComparison(MediaFeatureRange range) => range switch
+    {
+        MediaFeatureRange.Min => MediaFeatureRange.Max,
+        MediaFeatureRange.Max => MediaFeatureRange.Min,
+        MediaFeatureRange.GreaterThan => MediaFeatureRange.LessThan,
+        MediaFeatureRange.LessThan => MediaFeatureRange.GreaterThan,
+        _ => MediaFeatureRange.Plain,
+    };
+
+    /// <summary>
+    /// Whether an operand is where the feature name goes rather than a value. Range syntax
+    /// has no <c>min-</c>/<c>max-</c> spelling (<c>(min-width &gt; 5px)</c> is malformed), so
+    /// those prefixes disqualify an operand here — otherwise it would silently become the
+    /// feature it prefixes.
+    /// </summary>
+    private static bool IsMediaFeatureName(string operand) =>
+        IsMediaIdent(operand)
+        && !operand.StartsWith("min-", StringComparison.OrdinalIgnoreCase)
+        && !operand.StartsWith("max-", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Applies the comparison a term asked for. <paramref name="equalityEpsilon"/> is the
+    /// tolerance the plain (<c>=</c>) form uses; the ordered comparisons are exact, as they
+    /// were before the strict operators existed.
+    /// </summary>
+    private static MediaMatch CompareBound(
+        double actual, double bound, MediaFeatureRange range, double equalityEpsilon) => range switch
+    {
+        MediaFeatureRange.Min => Matched(actual >= bound),
+        MediaFeatureRange.Max => Matched(actual <= bound),
+        MediaFeatureRange.GreaterThan => Matched(actual > bound),
+        MediaFeatureRange.LessThan => Matched(actual < bound),
+        _ => Matched(Math.Abs(actual - bound) < equalityEpsilon),
+    };
+
+    // ---- Media Queries 5 custom media queries ------------------------------
+
+    /// <summary>
+    /// The document's <c>@custom-media</c> definitions: name (with its <c>--</c> prefix) to
+    /// the <c>&lt;media-query-list&gt;</c> it stands for, or to the <c>true</c>/<c>false</c>
+    /// keyword. Custom media queries are document-global rather than order-dependent, so
+    /// this is collected from every registered sheet before any query is evaluated, and a
+    /// later definition of a name replaces an earlier one.
+    /// </summary>
+    internal sealed class CustomMediaRegistry
+    {
+        private readonly Dictionary<string, string> _definitions = new(StringComparer.Ordinal);
+
+        internal static readonly CustomMediaRegistry Empty = new();
+
+        internal int Count => _definitions.Count;
+
+        internal void Define(string prelude)
+        {
+            // `@custom-media --name <media-query-list>` — the name is the first token.
+            var text = prelude.Trim();
+            if (!text.StartsWith("--", StringComparison.Ordinal))
+                return;
+
+            var split = text.IndexOfAny([' ', '\t', '\r', '\n', '(']);
+            if (split <= 2)
+                return;
+
+            var name = text[..split].Trim();
+            var query = text[split..].Trim();
+            if (name.Length <= 2 || query.Length == 0)
+                return;
+
+            _definitions[name] = query;
+        }
+
+        internal bool TryGet(string name, out string query) => _definitions.TryGetValue(name, out query!);
+    }
+
+    /// <summary>
+    /// Resolves <c>(--name)</c> to the query its <c>@custom-media</c> rule defined.
+    /// An undefined name is unknown, not false — <see cref="MediaMatch.Invalid"/>, so it
+    /// stays false under a leading <c>not</c>, exactly as <c>&lt;general-enclosed&gt;</c> does.
+    /// A definition that reaches itself (directly or through another name) is a cycle, which
+    /// Media Queries 5 §3 also makes invalid.
+    /// </summary>
+    private static MediaMatch EvaluateCustomMediaReference(
+        string name,
+        int viewportWidth,
+        int viewportHeight,
+        CustomMediaRegistry? customMedia,
+        HashSet<string>? resolving)
+    {
+        if (customMedia is null || !customMedia.TryGet(name, out var query))
+            return MediaMatch.Invalid;
+
+        if (query.Equals("true", StringComparison.OrdinalIgnoreCase))
+            return MediaMatch.Match;
+        if (query.Equals("false", StringComparison.OrdinalIgnoreCase))
+            return MediaMatch.NoMatch;
+
+        resolving ??= new HashSet<string>(StringComparer.Ordinal);
+        if (!resolving.Add(name))
+            return MediaMatch.Invalid;
+
+        try
+        {
+            foreach (var q in CssSyntax.SplitTopLevel(query, ','))
+            {
+                if (EvaluateSingleMediaQuery(q, viewportWidth, viewportHeight, customMedia, resolving)
+                    == MediaMatch.Match)
+                {
+                    return MediaMatch.Match;
+                }
+            }
+            return MediaMatch.NoMatch;
+        }
+        finally
+        {
+            resolving.Remove(name);
+        }
+    }
+
     // Boolean context ("(width)") is true when the feature's value is non-zero;
     // the min-/max- forms compare, the plain form is an equality test.
     private static MediaMatch CompareLength(
@@ -1694,12 +1991,7 @@ public sealed partial class CssStyleEngine
             return MediaMatch.Invalid;
 
         px = Math.Max(0, px);
-        return range switch
-        {
-            MediaFeatureRange.Min => Matched(actual >= px),
-            MediaFeatureRange.Max => Matched(actual <= px),
-            _ => Matched(Math.Abs(actual - px) < 0.5),
-        };
+        return CompareBound(actual, px, range, equalityEpsilon: 0.5);
     }
 
     private static MediaMatch CompareInteger(
@@ -1714,12 +2006,8 @@ public sealed partial class CssStyleEngine
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var bound))
             return MediaMatch.Invalid;
 
-        return range switch
-        {
-            MediaFeatureRange.Min => Matched(actual >= bound),
-            MediaFeatureRange.Max => Matched(actual <= bound),
-            _ => Matched(actual == bound),
-        };
+        // Both sides are integers, so |a − b| < 0.5 is exactly a == b.
+        return CompareBound(actual, bound, range, equalityEpsilon: 0.5);
     }
 
     private static MediaMatch CompareNumber(string? value, double actual, MediaFeatureRange range)
@@ -1730,12 +2018,7 @@ public sealed partial class CssStyleEngine
         if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var bound))
             return MediaMatch.Invalid;
 
-        return range switch
-        {
-            MediaFeatureRange.Min => Matched(actual >= bound),
-            MediaFeatureRange.Max => Matched(actual <= bound),
-            _ => Matched(Math.Abs(actual - bound) < 1e-6),
-        };
+        return CompareBound(actual, bound, range, equalityEpsilon: 1e-6);
     }
 
     // <ratio> = <number [0,∞]> [ / <number [0,∞]> ]? — a bare number is "n / 1".
@@ -1763,12 +2046,7 @@ public sealed partial class CssStyleEngine
             return MediaMatch.Invalid;
 
         var bound = numerator / denominator;
-        return range switch
-        {
-            MediaFeatureRange.Min => Matched(actual >= bound),
-            MediaFeatureRange.Max => Matched(actual <= bound),
-            _ => Matched(Math.Abs(actual - bound) < 1e-6),
-        };
+        return CompareBound(actual, bound, range, equalityEpsilon: 1e-6);
     }
 
     // A discrete feature matches when its value equals the device's; a value
@@ -1830,12 +2108,7 @@ public sealed partial class CssStyleEngine
             return MediaMatch.Invalid;
         }
 
-        return range switch
-        {
-            MediaFeatureRange.Min => Matched(actual >= target),
-            MediaFeatureRange.Max => Matched(actual <= target),
-            _ => Matched(Math.Abs(actual - target) < 1e-6),
-        };
+        return CompareBound(actual, target, range, equalityEpsilon: 1e-6);
     }
 
     // A media type or feature name must be a CSS <ident>: letters, digits,

@@ -86,6 +86,13 @@ public sealed partial class CssStyleEngine
     // item #11). Immutable once built, so a cascade can hold it while the engine re-syncs.
     private CssCascadeRuleIndex? _ruleIndex;
     private int _ruleIndexGeneration = -1;
+    // The document's @custom-media definitions for _sheetGeneration (Media Queries 5 §3).
+    // Collected from every registered sheet rather than resolved in place, because a custom
+    // media query is document-global: a definition below the @media rule that references it
+    // still applies to it. Shares the sheet generation, so it is rebuilt exactly when the
+    // rule index is and is never stale against the sheets it was collected from.
+    private CustomMediaRegistry _customMedia = CustomMediaRegistry.Empty;
+    private int _customMediaGeneration = -1;
     private readonly HashSet<DomDocument> _observedDocuments = [];
     private CssEnvironment _environment = CssEnvironment.Headless;
     // Host-supplied override for an element's inline declaration block. The HtmlBridge
@@ -714,12 +721,70 @@ public sealed partial class CssStyleEngine
         var viewportWidth = _environment.ViewportWidth;
         var viewportHeight = _environment.ViewportHeight;
 
+        var customMedia = GetOrBuildCustomMedia();
+
         _ruleIndex = CssCascadeRuleIndex.Build(
             sheets,
-            prelude => EvaluateMediaQuery(prelude, viewportWidth, viewportHeight),
+            prelude => EvaluateMediaQuery(prelude, viewportWidth, viewportHeight, customMedia),
             prelude => SupportsConditionSyntax.EvaluatesTrue(prelude, IsFeatureQuerySupported));
         _ruleIndexGeneration = _sheetGeneration;
         return _ruleIndex;
+    }
+
+    /// <summary>
+    /// The custom media registry for the current sheet set, taking <see cref="_sync"/> itself.
+    /// The linear-scan cascade path (<see cref="CollectFromRules"/>) runs outside the lock — it
+    /// walks a sheet snapshot taken under it — so unlike <see cref="GetOrBuildRuleIndex"/> it
+    /// cannot call the builder directly.
+    /// </summary>
+    private CustomMediaRegistry CurrentCustomMedia()
+    {
+        lock (_sync)
+            return GetOrBuildCustomMedia();
+    }
+
+    /// <summary>
+    /// The <c>@custom-media</c> definitions of the current sheet set (Media Queries 5 §3),
+    /// collected on first use after a sheet change. Called with <see cref="_sync"/> held,
+    /// like <see cref="GetOrBuildRuleIndex"/>, and returns an immutable registry the caller
+    /// keeps using outside the lock.
+    /// </summary>
+    private CustomMediaRegistry GetOrBuildCustomMedia()
+    {
+        if (_customMediaGeneration == _sheetGeneration)
+            return _customMedia;
+
+        var registry = new CustomMediaRegistry();
+        foreach (var entry in _sheets)
+            CollectCustomMedia(entry.Sheet.Rules, registry);
+
+        // Nothing defined is the overwhelmingly common case; share one instance for it so
+        // an evaluation can compare against Empty rather than probe an empty dictionary.
+        _customMedia = registry.Count == 0 ? CustomMediaRegistry.Empty : registry;
+        _customMediaGeneration = _sheetGeneration;
+        return _customMedia;
+    }
+
+    /// <summary>
+    /// Files every <c>@custom-media</c> rule reachable in <paramref name="rules"/> into
+    /// <paramref name="registry"/>, descending through conditional groups so a definition
+    /// inside an <c>@media</c>/<c>@supports</c> block is still found. The nesting does not
+    /// gate the definition: Media Queries 5 defines <c>@custom-media</c> only at the top
+    /// level, so a nested one is already outside the grammar and treating it as global is
+    /// the same answer as ignoring the group it sits in.
+    /// </summary>
+    private static void CollectCustomMedia(IReadOnlyList<CssRule> rules, CustomMediaRegistry registry)
+    {
+        foreach (var rule in rules)
+        {
+            if (rule is not CssAtRule atRule)
+                continue;
+
+            if (atRule.Name.Equals("custom-media", StringComparison.OrdinalIgnoreCase))
+                registry.Define(atRule.Prelude);
+            else if (atRule.Rules is { Count: > 0 } nested)
+                CollectCustomMedia(nested, registry);
+        }
     }
 
     /// <summary>
@@ -755,8 +820,14 @@ public sealed partial class CssStyleEngine
                     break;
 
                 case CssAtRule atRule when atRule.Name.Equals("media", StringComparison.OrdinalIgnoreCase):
-                    if (EvaluateMediaQuery(atRule.Prelude, _environment.ViewportWidth, _environment.ViewportHeight))
+                    if (EvaluateMediaQuery(
+                            atRule.Prelude,
+                            _environment.ViewportWidth,
+                            _environment.ViewportHeight,
+                            CurrentCustomMedia()))
+                    {
                         CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
+                    }
                     break;
 
                 case CssAtRule atRule when atRule.Name.Equals("supports", StringComparison.OrdinalIgnoreCase):

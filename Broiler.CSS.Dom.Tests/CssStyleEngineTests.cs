@@ -107,6 +107,143 @@ public sealed class CssStyleEngineTests
                 new CssEnvironment(viewportWidth, viewportHeight)));
     }
 
+    // Media Queries 4 §2.4 range syntax. The strict comparisons are the point: they
+    // have no `min-`/`max-` spelling, so `(width > 800px)` is not `(min-width: 800px)`
+    // and a viewport exactly on the bound must tell them apart.
+    [Theory]
+    [InlineData("(width > 0px)", 800, 600, true)]
+    [InlineData("(width > 800px)", 800, 600, false)]
+    [InlineData("(width >= 800px)", 800, 600, true)]
+    [InlineData("(width < 800px)", 800, 600, false)]
+    [InlineData("(width <= 800px)", 800, 600, true)]
+    [InlineData("(width = 800px)", 800, 600, true)]
+    [InlineData("(width = 801px)", 800, 600, false)]
+    [InlineData("(height > 500px)", 800, 600, true)]
+    // The feature may sit on either side; moving it flips the comparison.
+    [InlineData("(0px < width)", 800, 600, true)]
+    [InlineData("(800px < width)", 800, 600, false)]
+    [InlineData("(800px <= width)", 800, 600, true)]
+    [InlineData("(1000px > width)", 800, 600, true)]
+    // Two-sided form.
+    [InlineData("(400px < width < 1000px)", 800, 600, true)]
+    [InlineData("(800px < width < 1000px)", 800, 600, false)]
+    [InlineData("(800px <= width <= 1000px)", 800, 600, true)]
+    [InlineData("(1000px > width > 400px)", 800, 600, true)]
+    // Non-length features take the range syntax too.
+    [InlineData("(aspect-ratio > 1/1)", 800, 600, true)]
+    [InlineData("(resolution >= 1x)", 800, 600, true)]
+    [InlineData("(resolution > 1x)", 800, 600, false)]
+    // Composes with the rest of the grammar.
+    [InlineData("screen and (width > 0px)", 800, 600, true)]
+    [InlineData("not (width > 0px)", 800, 600, false)]
+    [InlineData("not (width > 5000px)", 800, 600, true)]
+    public void MatchesMediaQuery_Evaluates_Range_Syntax(
+        string query,
+        int viewportWidth,
+        int viewportHeight,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            CssStyleEngine.MatchesMediaQuery(
+                query,
+                new CssEnvironment(viewportWidth, viewportHeight)));
+    }
+
+    // A malformed range is `not all`, and — like every other unknown term — must stay
+    // false under a leading `not` rather than being negated into a match. The
+    // `min-`/`max-` cases are the ones worth pinning: range syntax has no prefixed
+    // spelling, so `min-width` there is a feature name the grammar does not have,
+    // not a request for an inclusive comparison.
+    [Theory]
+    [InlineData("(min-width > 5px)")]
+    [InlineData("not (min-width > 5px)")]
+    [InlineData("(max-width < 5px)")]
+    [InlineData("(1px < width > 2px)")]
+    [InlineData("not (1px < width > 2px)")]
+    [InlineData("(1px = width = 2px)")]
+    [InlineData("(width >)")]
+    [InlineData("(> 5px)")]
+    [InlineData("(5px < 10px)")]
+    [InlineData("(1px < width < 2px < 3px)")]
+    [InlineData("(orientation > landscape)")]
+    public void MatchesMediaQuery_Malformed_Range_Never_Matches(string query) =>
+        Assert.False(CssStyleEngine.MatchesMediaQuery(query, new CssEnvironment(800, 600)));
+
+    // Media Queries 5 §3: `@custom-media` names a query list that `(--name)` stands for.
+    [Fact]
+    public void CustomMedia_Reference_Resolves_To_Its_Definition()
+    {
+        var (_, _, body) = NewDocument();
+        var engine = EngineWith(
+            "@custom-media --wide (width > 400px); " +
+            "@media (--wide) { body { background-color: lime; } }");
+        engine.UpdateEnvironment(new CssEnvironment(800, 600));
+
+        Assert.Equal("lime", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+    }
+
+    // A definition is document-global, not order-dependent: it applies to a reference
+    // that appears above it.
+    [Fact]
+    public void CustomMedia_Definition_Applies_To_An_Earlier_Reference()
+    {
+        var (_, _, body) = NewDocument();
+        var engine = EngineWith(
+            "@media (--wide) { body { background-color: lime; } } " +
+            "@custom-media --wide (width > 400px);");
+        engine.UpdateEnvironment(new CssEnvironment(800, 600));
+
+        Assert.Equal("lime", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+    }
+
+    [Fact]
+    public void CustomMedia_Reference_That_Does_Not_Match_Applies_Nothing()
+    {
+        var (_, _, body) = NewDocument();
+        var engine = EngineWith(
+            "@custom-media --narrow (width < 400px); " +
+            "@media (--narrow) { body { background-color: red; } }");
+        engine.UpdateEnvironment(new CssEnvironment(800, 600));
+
+        Assert.NotEqual("red", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+    }
+
+    // `false` leaves background-color at its initial value rather than at no value
+    // at all, which is what the cascade backfills for a property nothing set.
+    [Theory]
+    [InlineData("true", "lime")]
+    [InlineData("false", "rgba(0, 0, 0, 0)")]
+    public void CustomMedia_Accepts_The_True_And_False_Keywords(string keyword, string expected)
+    {
+        var (_, _, body) = NewDocument();
+        var engine = EngineWith(
+            $"@custom-media --flag {keyword}; " +
+            "@media (--flag) { body { background-color: lime; } }");
+        engine.UpdateEnvironment(new CssEnvironment(800, 600));
+
+        Assert.Equal(expected, engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+    }
+
+    // An undefined name is unknown, not false, so `not (--undefined)` must not match
+    // either — the same rule <general-enclosed> follows. A definition that reaches
+    // itself is a cycle, which the spec also makes invalid; without a guard it would
+    // recurse until the stack ran out.
+    [Theory]
+    [InlineData("@media (--nope) { body { background-color: red; } }")]
+    [InlineData("@media not (--nope) { body { background-color: red; } }")]
+    [InlineData("@custom-media --loop (--loop); @media (--loop) { body { background-color: red; } }")]
+    [InlineData("@custom-media --a (--b); @custom-media --b (--a); " +
+                "@media (--a) { body { background-color: red; } }")]
+    public void CustomMedia_Undefined_Or_Cyclic_Never_Matches(string css)
+    {
+        var (_, _, body) = NewDocument();
+        var engine = EngineWith(css);
+        engine.UpdateEnvironment(new CssEnvironment(800, 600));
+
+        Assert.NotEqual("red", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+    }
+
     // css/css-conditional/at-media-whitespace-optional-001: `@media{ … }` has an
     // empty query list, so its rules cascade like any unconditional rule.
     [Fact]
