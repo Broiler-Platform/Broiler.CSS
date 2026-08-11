@@ -430,7 +430,14 @@ public sealed partial class CssStyleEngine
                     // valid declaration and falling back to a stale cascade value.
                     or "ruby" or "ruby-base" or "ruby-text"
                     or "ruby-base-container" or "ruby-text-container"
-                    or "math")
+                    or "math"
+                    // The legacy WebKit flexible box. Every engine still
+                    // accepts these two keywords, and `-webkit-line-clamp`
+                    // is opted into by being one, so dropping them as invalid
+                    // left the clamp with no way to tell a legacy box from a
+                    // plain block -- the distinction css-overflow/line-clamp
+                    // spends most of its webkit-line-clamp tests on.
+                    or "-webkit-box" or "-webkit-inline-box")
                     return true;
                 // The experimental CSS Grid Level 3 <display-inside> keyword
                 // grid-lanes is intentionally NOT accepted: no stable browser
