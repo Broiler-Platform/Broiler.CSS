@@ -23,6 +23,25 @@ namespace Broiler.CSS.Dom;
 public sealed partial class CssStyleEngine
 {
     /// <summary>
+    /// Evaluates a complete <c>&lt;supports-condition&gt;</c> — the same grammar and the same
+    /// oracle the cascade applies to an <c>@supports</c> prelude, so <c>not</c>, <c>and</c>,
+    /// <c>or</c> and nested parentheses are all handled, and a malformed condition is simply
+    /// false rather than an error.
+    /// </summary>
+    /// <remarks>
+    /// This is the entry point behind the CSSOM <c>CSS.supports()</c> method, which has to
+    /// answer exactly as the cascade would: a page that asks whether a feature is supported and
+    /// then styles with it must get one consistent answer from both. Note what the oracle above
+    /// models — what the reference browser understands, not what Broiler's layout engine has
+    /// implemented — which is also the right answer for <c>CSS.supports()</c>, since a page
+    /// feature-detects to decide which CSS to write, not to predict how it will be painted.
+    /// </remarks>
+    public static bool EvaluatesSupportsCondition(string condition) =>
+        !string.IsNullOrWhiteSpace(condition)
+        && SupportsConditionSyntax.IsValidCondition(condition)
+        && SupportsConditionSyntax.EvaluatesTrue(condition, IsFeatureQuerySupported);
+
+    /// <summary>
     /// Resolves an <c>@supports</c> feature query <c>(property: value)</c>: returns
     /// <c>true</c> only when the property is a recognised CSS property and the value
     /// is acceptable for it. Unknown properties, empty values, and values that fail
