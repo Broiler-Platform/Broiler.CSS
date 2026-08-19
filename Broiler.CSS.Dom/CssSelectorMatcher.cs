@@ -191,7 +191,21 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 "invalid" => IsConstraintValidationCandidate(element) && HasConstraintViolation(element),
                 "required" => SupportsRequiredState(element) && IsRequiredControl(element),
                 "optional" => SupportsRequiredState(element) && !IsRequiredControl(element),
-                "link" or "visited" => IsNamed(element, "a") && element.HasAttribute("href"),
+                "link" => IsNamed(element, "a", "area") && element.HasAttribute("href"),
+                // Selectors 4 §7.1 pairs :link and :visited, but they are not synonyms —
+                // :visited matches a link this user has been to. A static render has no
+                // history to consult, and :visited is the one selector a page must never be
+                // able to read history through, so the honest and the safe answer are the
+                // same one: it never matches. Treating it as :link applied every visited
+                // style to every link, which is not a subtle shading difference — the rule
+                // comes later in the sheet and wins the cascade, so on www.mediawiki.org
+                // every link in the article rendered in the visited purple (#6a60b0) where a
+                // browser shows the unvisited blue (#36c).
+                "visited" => false,
+                // :any-link is the union of the two, and unlike :visited it is knowable: it
+                // is any element that IS a hyperlink. It used to fall through to the lenient
+                // default below and match every element, not just links.
+                "any-link" => IsNamed(element, "a", "area") && element.HasAttribute("href"),
                 // Interactive/user-state pseudo-classes never match in a static
                 // render (nothing is focused, hovered, active, or targeted), so a UA
                 // rule like `:focus { outline: thin dotted invert }` must not apply
