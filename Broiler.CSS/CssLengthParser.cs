@@ -548,6 +548,66 @@ public static class CssLengthParser
             return true;
         }
 
+        // CSS Values 4 §10.1: below the sum tier is the product tier, `<calc-value> [ [ '*' |
+        // '/' ] <calc-value> ]*`. It was missing, so any calc() containing a multiplication or a
+        // division failed to parse *as a whole* and the declaration was dropped — including
+        // MediaWiki's `max-width: calc(100% - (2 * 3px) - (2 * 1px))`, which left the thumbnail
+        // it caps unsized. Splitting at the last top-level operator makes the accumulated prefix
+        // the left operand, which is the left-associativity `100px / 2 * 3` needs.
+        var multiplicativeOperatorIndex = FindTopLevelMultiplicativeOperator(current);
+        if (multiplicativeOperatorIndex > 0)
+        {
+            // A product's operands may be plain numbers, which the sum tier rejects (`100% - 8`
+            // is not a length); here one of them has to be. So the operands are evaluated with
+            // the unitless bar lowered, and the checks below enforce what the grammar allows.
+            if (!TryEvaluateLengthExpressionCore(current[..multiplicativeOperatorIndex],
+                    hundredPercent, emFactor,
+                    defaultUnit, fontAdjust,
+                    returnPoints, lineHeightFactor,
+                    rootLineHeightFactor, insideMathFunction: false,
+                    out var multiplicand))
+            {
+                return false;
+            }
+
+            if (!TryEvaluateLengthExpressionCore(
+                    current[(multiplicativeOperatorIndex + 1)..],
+                    hundredPercent,
+                    emFactor,
+                    defaultUnit,
+                    fontAdjust,
+                    returnPoints,
+                    lineHeightFactor,
+                    rootLineHeightFactor,
+                    insideMathFunction: false,
+                    out var multiplier))
+            {
+                return false;
+            }
+
+            if (current[multiplicativeOperatorIndex] == '*')
+            {
+                // At least one side of a product must be a number; `2em * 3em` is invalid.
+                if (!multiplicand.IsUnitless && !multiplier.IsUnitless)
+                    return false;
+
+                evaluation = new LengthEvaluation(
+                    multiplicand.Pixels * multiplier.Pixels,
+                    IsUnitless: multiplicand.IsUnitless && multiplier.IsUnitless);
+                return true;
+            }
+
+            // A divisor must be a number, and dividing by zero makes the whole expression
+            // invalid rather than infinite.
+            if (!multiplier.IsUnitless || multiplier.Pixels == 0)
+                return false;
+
+            evaluation = new LengthEvaluation(
+                multiplicand.Pixels / multiplier.Pixels,
+                IsUnitless: multiplicand.IsUnitless);
+            return true;
+        }
+
         return TryParseSimpleLength(current,
             hundredPercent, emFactor,
             defaultUnit, fontAdjust,
@@ -731,10 +791,45 @@ public static class CssLengthParser
                         expression[leftIndex] != '(' &&
                         expression[leftIndex] != ',' &&
                         expression[leftIndex] != '+' &&
-                        expression[leftIndex] != '-')
+                        expression[leftIndex] != '-' &&
+                        // A '-' straight after a product operator is the sign of the operand that
+                        // follows it, the same way it is after '(' — `calc(2 * -3px)` is one
+                        // product, not a subtraction with an empty left-hand side.
+                        expression[leftIndex] != '*' &&
+                        expression[leftIndex] != '/')
                     {
                         return i;
                     }
+                    break;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Index of the last top-level <c>*</c>/<c>/</c> operator in a <c>calc()</c>-style
+    /// expression (scanning right-to-left, ignoring operators inside parentheses), or
+    /// <c>-1</c> if none. The product tier binds tighter than the sum tier, so this is
+    /// consulted only once no top-level <c>+</c>/<c>-</c> is left.
+    /// </summary>
+    public static int FindTopLevelMultiplicativeOperator(string expression)
+    {
+        var depth = 0;
+        for (int i = expression.Length - 1; i >= 1; i--)
+        {
+            switch (expression[i])
+            {
+                case ')':
+                    depth++;
+                    break;
+                case '(':
+                    depth--;
+                    break;
+                case '*':
+                case '/':
+                    if (depth == 0)
+                        return i;
                     break;
             }
         }
@@ -787,11 +882,79 @@ public static class CssLengthParser
     /// font/percentage bases.
     /// </summary>
     public static double ParseToPixels(string value, int viewportWidth = 0, int viewportHeight = 0,
-        string? rootWritingMode = null)
+        string? rootWritingMode = null) =>
+        ParseToPixels(value, viewportWidth, viewportHeight, rootWritingMode, depth: 0, out _);
+
+    /// <summary>
+    /// Nesting cap for the math tiers, so a pathological expression cannot recurse without
+    /// bound. Real stylesheets nest a handful of levels at most.
+    /// </summary>
+    private const int MaxLengthMathNesting = 16;
+
+    private static double ParseToPixels(string value, int viewportWidth, int viewportHeight,
+        string? rootWritingMode, int depth, out bool unitless)
     {
+        unitless = false;
         if (string.IsNullOrWhiteSpace(value)) return double.NaN;
 
+        // CSS Values 4 §10: a length may be written as a math function, and Media Queries 4
+        // §2.4.1 lets a media feature take one — Vector 2022 writes its breakpoints as
+        // `(max-width: calc(1120px - 1px))`. The sum and product tiers below recurse through
+        // this entry point so their leaves keep resolving viewport units against the viewport
+        // the caller supplied, which the font-metric evaluator has no viewport to resolve.
+        if (depth < MaxLengthMathNesting &&
+            TryEvaluateViewportMathList(value.Trim(), viewportWidth, viewportHeight, rootWritingMode, depth,
+                out var listResult))
+        {
+            return listResult;
+        }
+
         var v = NormalizeSingleValueLengthFunction(value).Trim().ToLowerInvariant();
+
+        if (depth < MaxLengthMathNesting)
+        {
+            var additive = FindTopLevelAdditiveOperator(v);
+            if (additive > 0)
+            {
+                var left = ParseToPixels(v[..additive], viewportWidth, viewportHeight, rootWritingMode,
+                    depth + 1, out var leftUnitless);
+                var right = ParseToPixels(v[(additive + 1)..], viewportWidth, viewportHeight, rootWritingMode,
+                    depth + 1, out var rightUnitless);
+                if (double.IsNaN(left) || double.IsNaN(right) || leftUnitless != rightUnitless)
+                    return double.NaN;
+
+                unitless = leftUnitless;
+                return v[additive] == '-' ? left - right : left + right;
+            }
+
+            var multiplicative = FindTopLevelMultiplicativeOperator(v);
+            if (multiplicative > 0)
+            {
+                var left = ParseToPixels(v[..multiplicative], viewportWidth, viewportHeight, rootWritingMode,
+                    depth + 1, out var leftUnitless);
+                var right = ParseToPixels(v[(multiplicative + 1)..], viewportWidth, viewportHeight, rootWritingMode,
+                    depth + 1, out var rightUnitless);
+                if (double.IsNaN(left) || double.IsNaN(right))
+                    return double.NaN;
+
+                if (v[multiplicative] == '/')
+                {
+                    // A divisor must be a number, and dividing by zero makes the expression invalid.
+                    if (!rightUnitless || right == 0)
+                        return double.NaN;
+
+                    unitless = leftUnitless;
+                    return left / right;
+                }
+
+                // At least one side of a product must be a number; `2em * 3em` is invalid.
+                if (!leftUnitless && !rightUnitless)
+                    return double.NaN;
+
+                unitless = leftUnitless && rightUnitless;
+                return left * right;
+            }
+        }
 
         // One scan covers the whole viewport family; the canonical spelling then
         // picks the axis, and tokenLength trims the written unit (svmin → 5).
@@ -833,8 +996,65 @@ public static class CssLengthParser
             return TryParseLeadingNumber(v, 2, out var lh) ? lh * 19.2 : double.NaN;
 
         if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var raw))
+        {
+            unitless = true;
             return raw;
+        }
+
         return double.NaN;
+    }
+
+    /// <summary>
+    /// CSS Values 4 §10.8: evaluates <c>min()</c>/<c>max()</c>/<c>clamp()</c>, whose
+    /// comma-separated argument lists <see cref="NormalizeSingleValueLengthFunction"/>
+    /// deliberately leaves alone. Each argument is a full expression, so it goes back through
+    /// <see cref="ParseToPixels(string,int,int,string,int,out bool)"/> and keeps the viewport.
+    /// Returns <see langword="false"/> when the value is not one of these functions; a
+    /// function whose arguments do not evaluate yields <see cref="double.NaN"/>.
+    /// </summary>
+    private static bool TryEvaluateViewportMathList(string value, int viewportWidth, int viewportHeight,
+        string? rootWritingMode, int depth, out double result)
+    {
+        result = double.NaN;
+        if (value.Length == 0 || value[^1] != ')')
+            return false;
+
+        static bool StartsWithFunction(string candidate, string functionName)
+            => candidate.StartsWith(functionName + "(", StringComparison.OrdinalIgnoreCase);
+
+        var isClamp = StartsWithFunction(value, "clamp");
+        var isMax = StartsWithFunction(value, "max");
+        if (!isClamp && !isMax && !StartsWithFunction(value, "min"))
+            return false;
+
+        var body = value[(isClamp ? 6 : 4)..^1];
+        if (!HasBalancedParens(body))
+            return false;
+
+        var parts = SplitTopLevelArguments(body);
+        if (parts.Count < 2 || (isClamp && parts.Count != 3))
+            return false;
+
+        var values = new double[parts.Count];
+        for (var i = 0; i < parts.Count; i++)
+        {
+            values[i] = ParseToPixels(parts[i], viewportWidth, viewportHeight, rootWritingMode, depth + 1, out _);
+            if (double.IsNaN(values[i]))
+                return true;
+        }
+
+        if (isClamp)
+        {
+            // clamp(min, val, max) == max(min, min(val, max)); the minimum wins a crossover.
+            result = Math.Max(values[0], Math.Min(values[1], values[2]));
+            return true;
+        }
+
+        result = values[0];
+        for (var i = 1; i < values.Length; i++)
+            result = isMax ? Math.Max(result, values[i]) : Math.Min(result, values[i]);
+
+        return true;
     }
 
     private static bool TryParseLeadingNumber(string value, int suffixLength, out double result) =>
