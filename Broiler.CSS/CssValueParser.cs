@@ -32,8 +32,7 @@ public static class CssValueParser
         var value = text?.Trim() ?? string.Empty;
         if (value.Length == 0)
             return new CssValue(string.Empty);
-
-        if (TryParseColor(value, out var color))
+        if (TryParseColor(value, out _))
             return new CssValue(value);
 
         if (TryParseNumeric(value, out var numeric))

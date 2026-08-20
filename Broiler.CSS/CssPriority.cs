@@ -17,11 +17,9 @@ namespace Broiler.CSS;
 /// declaration path (<c>CssParser</c>) has its own internal handling; this type
 /// is the reusable string utility for post-parse CSSOM string values.
 /// </summary>
-public static class CssPriority
+public static partial class CssPriority
 {
-    private static readonly Regex ImportantSuffixPattern = new(
-        @"\s*!\s*important\s*$",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex ImportantSuffixPattern = ImportantSuffixRegex();
 
     /// <summary>
     /// Returns <paramref name="value"/> with any trailing <c>!important</c> removed
@@ -48,4 +46,7 @@ public static class CssPriority
         => string.Equals(priority?.Trim(), "important", StringComparison.OrdinalIgnoreCase)
             ? $"{Strip(value)} !important".Trim()
             : Strip(value);
+
+    [GeneratedRegex(@"\s*!\s*important\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex ImportantSuffixRegex();
 }

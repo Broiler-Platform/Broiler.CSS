@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Broiler.Dom;
 
 namespace Broiler.CSS.Dom;
@@ -21,9 +22,9 @@ namespace Broiler.CSS.Dom;
 /// <see cref="CssEnvironment"/>; dynamic form-control state arrives through
 /// <see cref="ICssSelectorStateProvider"/>.
 /// </remarks>
-public sealed partial class CssStyleEngine
+public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvider = null)
 {
-    private readonly CssSelectorMatcher _matcher;
+    private readonly CssSelectorMatcher _matcher = new(stateProvider);
     // Guards the fields that are read-modify-written as a unit — _sheets, _observedDocuments,
     // _registrations, _cacheGeneration, _sheetGeneration, and the rule index. The engine is
     // re-entered concurrently: the HtmlBridge's GetComputedProps routes through this engine's
@@ -48,7 +49,7 @@ public sealed partial class CssStyleEngine
     // still happens under _sync so that "is this result still current" and "publish it" cannot be
     // split by a concurrent InvalidateAll. That guard is what makes the lock-free compute window
     // correct, so it survives the change deliberately rather than by omission.
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly List<StyleSheetEntry> _sheets = [];
     private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = new();
     // Sparse computed-style memo: the specified + sparse-inheritance projection (no
@@ -100,9 +101,6 @@ public sealed partial class CssStyleEngine
     // JS `el.style.X=` setters and the anchor resolver mutate, which never reaches the DOM
     // `style` attribute). Null = read the `style` attribute as usual.
     private Func<DomElement, string?>? _inlineStyleProvider;
-
-    public CssStyleEngine(ICssSelectorStateProvider? stateProvider = null) =>
-        _matcher = new CssSelectorMatcher(stateProvider);
 
     /// <summary>
     /// Overrides the source of each element's inline declaration block. When set, the
@@ -326,7 +324,7 @@ public sealed partial class CssStyleEngine
         lock (_sync)
             generation = _cacheGeneration;
 
-        var computed = ComputeCascadedStyle(key.Item1, key.Item2, [], key.includeInlineStyle);
+        var computed = ComputeCascadedStyle(key.element, key.Item2, [], key.includeInlineStyle);
 
         // Same guard as GetCascadedDeclarationMap, and for the same reason: selector matching can
         // call back into the host mid-cascade and re-sync the stylesheets, so a result derived from
@@ -622,7 +620,7 @@ public sealed partial class CssStyleEngine
         {
             generation = _cacheGeneration;
             ruleIndex = UseRuleIndex ? GetOrBuildRuleIndex() : null;
-            sheetsSnapshot = ruleIndex is null ? _sheets.ToArray() : [];
+            sheetsSnapshot = ruleIndex is null ? [.. _sheets] : [];
         }
 
         var winners = new Dictionary<string, CascadeSlot>(StringComparer.OrdinalIgnoreCase);
@@ -1029,7 +1027,7 @@ public sealed partial class CssStyleEngine
 
     private static bool ContainsPseudoElementSelector(string selector)
     {
-        if (selector.IndexOf("::", StringComparison.Ordinal) >= 0)
+        if (selector.Contains("::"))
             return true;
 
         return selector.EndsWith(":before", StringComparison.OrdinalIgnoreCase)

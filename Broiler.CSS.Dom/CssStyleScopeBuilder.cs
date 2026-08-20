@@ -19,14 +19,11 @@ namespace Broiler.CSS.Dom;
 /// <c>@import</c>/<c>@namespace</c> correctly. Only the assembly is here; cascade,
 /// inheritance, and computed style stay in <see cref="CssStyleEngine"/>.
 /// </remarks>
-public sealed class CssStyleScopeBuilder
+public sealed class CssStyleScopeBuilder(CssStyleEngine engine)
 {
-    private readonly CssStyleEngine _engine;
+    private readonly CssStyleEngine _engine = engine ?? throw new ArgumentNullException(nameof(engine));
     private bool _synced;
     private int _syncHash;
-
-    public CssStyleScopeBuilder(CssStyleEngine engine) =>
-        _engine = engine ?? throw new ArgumentNullException(nameof(engine));
 
     /// <summary>The engine whose stylesheet set this builder maintains.</summary>
     public CssStyleEngine Engine => _engine;

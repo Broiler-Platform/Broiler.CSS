@@ -1,5 +1,3 @@
-using System;
-
 namespace Broiler.CSS;
 
 /// <summary>What kind of simple selector a rule is keyed on. See <see cref="CssSelectorKey"/>.</summary>

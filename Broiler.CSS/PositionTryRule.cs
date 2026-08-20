@@ -76,8 +76,8 @@ public static partial class PositionTryRule
     public static string[] ParseFallbackList(string value)
     {
         if (value is null)
-            return Array.Empty<string>();
-        return value.Split(',').Select(n => n.Trim()).ToArray();
+            return [];
+        return [.. value.Split(',').Select(n => n.Trim())];
     }
 
     [GeneratedRegex(@"@position-try\s+(?<name>--[a-zA-Z0-9_-]+)\s*\{(?<body>[^}]*)\}", RegexOptions.IgnoreCase | RegexOptions.Compiled)]

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 
 namespace Broiler.CSS.Cssom;
@@ -120,7 +119,7 @@ public static class CssomRuleMetadata
                 mediaText = importBody[(closeParen + 1)..].Trim();
             }
         }
-        else if (importBody.StartsWith("\"", StringComparison.Ordinal) || importBody.StartsWith("'", StringComparison.Ordinal))
+        else if (importBody.StartsWith("\"", StringComparison.Ordinal) || importBody.StartsWith('\''))
         {
             var quote = importBody[0];
             var closingQuote = importBody.IndexOf(quote, 1);
@@ -201,7 +200,7 @@ public static class CssomRuleMetadata
             var quote = uriPart[0];
             var closingQuote = uriPart.LastIndexOf(quote);
             if (closingQuote > 0)
-                return uriPart.Substring(1, closingQuote - 1);
+                return uriPart[1..closingQuote];
         }
 
         return uriPart;

@@ -154,7 +154,7 @@ internal sealed class CssCascadeRuleIndex
                         entries.Add(new Entry(
                             styleRule,
                             origin,
-                            containerConditions is { Count: > 0 } ? containerConditions.ToArray() : null));
+                            containerConditions is { Count: > 0 } ? [.. containerConditions] : null));
                         File(entries.Count - 1, styleRule);
                         break;
 

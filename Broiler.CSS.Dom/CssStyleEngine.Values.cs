@@ -252,8 +252,8 @@ public sealed partial class CssStyleEngine
     // True when the value contains a var() or env() substitution function whose
     // resolution has been deferred to computed-value time.
     private static bool ContainsSubstitutionFunction(string value) =>
-        value.IndexOf("var(", StringComparison.OrdinalIgnoreCase) >= 0
-        || value.IndexOf("env(", StringComparison.OrdinalIgnoreCase) >= 0;
+        value.Contains("var(", StringComparison.OrdinalIgnoreCase)
+        || value.Contains("env(", StringComparison.OrdinalIgnoreCase);
 
     // Index of the earliest var()/env() function at or after <paramref name="start"/>,
     // or -1 if neither occurs. <paramref name="isEnv"/> reports which one won.
@@ -301,7 +301,7 @@ public sealed partial class CssStyleEngine
         // A dimensional env() name may carry integer indices
         // (e.g. env(viewport-segment-width 0 0)); the leading identifier names it.
         string name = nameSpec;
-        int firstWhitespace = nameSpec.IndexOfAny(new[] { ' ', '\t', '\n', '\r', '\f' });
+        int firstWhitespace = nameSpec.IndexOfAny([' ', '\t', '\n', '\r', '\f']);
         if (firstWhitespace >= 0)
             name = nameSpec[..firstWhitespace];
 
@@ -949,7 +949,7 @@ public sealed partial class CssStyleEngine
             result.Add(t);
         }
 
-        return result.ToArray();
+        return [.. result];
     }
 
     private static bool TryParseFontSizeAndLineHeight(string lowerToken, string originalToken, out string fontSize, out string lineHeight)
@@ -1105,10 +1105,10 @@ public sealed partial class CssStyleEngine
     // The longhands the `background` shorthand sets (CSS Backgrounds 3 §3.10). background-blend-mode
     // is deliberately excluded — it is not a `background` sub-property.
     private static readonly string[] BackgroundLonghandProperties =
-    {
+    [
         "background-color", "background-image", "background-repeat", "background-attachment",
         "background-position", "background-size", "background-origin", "background-clip",
-    };
+    ];
 
     private static void ExpandBackgroundShorthand(Dictionary<string, string> computed, string value)
     {
@@ -1661,94 +1661,53 @@ public sealed partial class CssStyleEngine
     {
         var aspectRatio = viewportHeight > 0 ? (double)viewportWidth / viewportHeight : 0;
 
-        switch (name)
+        return name switch
         {
             // ---- <length> range features ----------------------------------
-            case "width":
-            case "device-width":
-                return CompareLength(value, viewportWidth, range, viewportWidth, viewportHeight);
-            case "height":
-            case "device-height":
-                return CompareLength(value, viewportHeight, range, viewportWidth, viewportHeight);
-
+            "width" or "device-width" => CompareLength(value, viewportWidth, range, viewportWidth, viewportHeight),
+            "height" or "device-height" => CompareLength(value, viewportHeight, range, viewportWidth, viewportHeight),
             // ---- <ratio> range features -----------------------------------
-            case "aspect-ratio":
-            case "device-aspect-ratio":
-                return CompareRatio(value, aspectRatio, range);
-
+            "aspect-ratio" or "device-aspect-ratio" => CompareRatio(value, aspectRatio, range),
             // ---- <integer> range features ---------------------------------
-            case "color":
-                return CompareInteger(value, DeviceColorDepth, range, booleanIsMatch: true);
-            case "color-index":
-                return CompareInteger(value, 0, range, booleanIsMatch: false);
-            case "monochrome":
-                return CompareInteger(value, DeviceMonochromeDepth, range, booleanIsMatch: false);
-            case "grid":
-                // 0 = bitmap device, 1 = grid (terminal) device.
-                return CompareInteger(value, 0, range, booleanIsMatch: false);
-
-            // ---- <resolution> range features ------------------------------
-            case "resolution":
-                return CompareResolution(value, range);
-            case "device-pixel-ratio":
-                return CompareNumber(value, DeviceDppx, range);
-
+            "color" => CompareInteger(value, DeviceColorDepth, range, booleanIsMatch: true),
+            "color-index" => CompareInteger(value, 0, range, booleanIsMatch: false),
+            "monochrome" => CompareInteger(value, DeviceMonochromeDepth, range, booleanIsMatch: false),
+            "grid" => CompareInteger(value, 0, range, booleanIsMatch: false),// 0 = bitmap device, 1 = grid (terminal) device.
+                                                                             // ---- <resolution> range features ------------------------------
+            "resolution" => CompareResolution(value, range),
+            "device-pixel-ratio" => CompareNumber(value, DeviceDppx, range),
             // ---- Discrete features ----------------------------------------
-            case "orientation":
-                return Discrete(
-                    value, range,
-                    viewportHeight > viewportWidth ? "portrait" : "landscape",
-                    ["portrait", "landscape"],
-                    booleanContext: MediaMatch.Match);
-            case "scan":
-                return Discrete(value, range, "progressive", ["interlace", "progressive"], MediaMatch.Match);
-            case "update":
-                return Discrete(value, range, "fast", ["none", "slow", "fast"], MediaMatch.Match);
-            case "overflow-block":
-                return Discrete(value, range, "scroll", ["none", "scroll", "paged", "optional-paged"], MediaMatch.Match);
-            case "overflow-inline":
-                return Discrete(value, range, "scroll", ["none", "scroll"], MediaMatch.Match);
-            case "pointer":
-            case "any-pointer":
-                return Discrete(value, range, "fine", ["none", "coarse", "fine"], MediaMatch.Match);
-            case "hover":
-            case "any-hover":
-                return Discrete(value, range, "hover", ["none", "hover"], MediaMatch.Match);
-            case "color-gamut":
-                return Discrete(value, range, "srgb", ["srgb", "p3", "rec2020"], MediaMatch.Match);
-            case "dynamic-range":
-            case "video-dynamic-range":
-                return Discrete(value, range, "standard", ["standard", "high"], MediaMatch.Match);
-            case "scripting":
-                return Discrete(value, range, "enabled", ["none", "initial-only", "enabled"], MediaMatch.Match);
-            case "display-mode":
-                return Discrete(
-                    value, range, "browser",
-                    ["browser", "standalone", "minimal-ui", "fullscreen", "picture-in-picture"],
-                    MediaMatch.Match);
-            case "forced-colors":
-                return Discrete(value, range, "none", ["none", "active"], MediaMatch.NoMatch);
-            case "inverted-colors":
-                return Discrete(value, range, "none", ["none", "inverted"], MediaMatch.NoMatch);
-            case "prefers-color-scheme":
-                return Discrete(value, range, "light", ["light", "dark"], MediaMatch.Match);
-            case "prefers-contrast":
-                return Discrete(
-                    value, range, "no-preference",
-                    ["no-preference", "less", "more", "custom"],
-                    MediaMatch.NoMatch);
-            case "prefers-reduced-motion":
-                return Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch);
-            case "prefers-reduced-transparency":
-                return Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch);
-            case "prefers-reduced-data":
-                return Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch);
-
-            default:
-                // <general-enclosed>: parses, but its value is unknown — which is
-                // false, and stays false under `not`.
-                return MediaMatch.Invalid;
-        }
+            "orientation" => Discrete(
+                                value, range,
+                                viewportHeight > viewportWidth ? "portrait" : "landscape",
+                                ["portrait", "landscape"],
+                                booleanContext: MediaMatch.Match),
+            "scan" => Discrete(value, range, "progressive", ["interlace", "progressive"], MediaMatch.Match),
+            "update" => Discrete(value, range, "fast", ["none", "slow", "fast"], MediaMatch.Match),
+            "overflow-block" => Discrete(value, range, "scroll", ["none", "scroll", "paged", "optional-paged"], MediaMatch.Match),
+            "overflow-inline" => Discrete(value, range, "scroll", ["none", "scroll"], MediaMatch.Match),
+            "pointer" or "any-pointer" => Discrete(value, range, "fine", ["none", "coarse", "fine"], MediaMatch.Match),
+            "hover" or "any-hover" => Discrete(value, range, "hover", ["none", "hover"], MediaMatch.Match),
+            "color-gamut" => Discrete(value, range, "srgb", ["srgb", "p3", "rec2020"], MediaMatch.Match),
+            "dynamic-range" or "video-dynamic-range" => Discrete(value, range, "standard", ["standard", "high"], MediaMatch.Match),
+            "scripting" => Discrete(value, range, "enabled", ["none", "initial-only", "enabled"], MediaMatch.Match),
+            "display-mode" => Discrete(
+                                value, range, "browser",
+                                ["browser", "standalone", "minimal-ui", "fullscreen", "picture-in-picture"],
+                                MediaMatch.Match),
+            "forced-colors" => Discrete(value, range, "none", ["none", "active"], MediaMatch.NoMatch),
+            "inverted-colors" => Discrete(value, range, "none", ["none", "inverted"], MediaMatch.NoMatch),
+            "prefers-color-scheme" => Discrete(value, range, "light", ["light", "dark"], MediaMatch.Match),
+            "prefers-contrast" => Discrete(
+                                value, range, "no-preference",
+                                ["no-preference", "less", "more", "custom"],
+                                MediaMatch.NoMatch),
+            "prefers-reduced-motion" => Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch),
+            "prefers-reduced-transparency" => Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch),
+            "prefers-reduced-data" => Discrete(value, range, "no-preference", ["no-preference", "reduce"], MediaMatch.NoMatch),
+            _ => MediaMatch.Invalid,// <general-enclosed>: parses, but its value is unknown — which is
+                                    // false, and stays false under `not`.
+        };
     }
 
     private static MediaMatch Matched(bool matches) => matches ? MediaMatch.Match : MediaMatch.NoMatch;
@@ -2090,7 +2049,7 @@ public sealed partial class CssStyleEngine
         double target;
         double actual;
 
-        if (v.EndsWith("dppx", StringComparison.Ordinal) || v.EndsWith("x", StringComparison.Ordinal))
+        if (v.EndsWith("dppx", StringComparison.Ordinal) || v.EndsWith('x'))
         {
             var digits = v.EndsWith("dppx", StringComparison.Ordinal) ? v[..^4] : v[..^1];
             if (!double.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out target))
@@ -2181,7 +2140,7 @@ public sealed partial class CssStyleEngine
     private static bool IsLengthPercentageProperty(string property) =>
         LengthPercentageProperties.Contains(property);
 
-    private static readonly string[] ComparisonMathFunctionNames = { "min", "max", "clamp" };
+    private static readonly string[] ComparisonMathFunctionNames = ["min", "max", "clamp"];
 
     // True when the value contains a min()/max()/clamp() call that takes a bare
     // <number> (e.g. `min(0, 100%)`) as one of its top-level arguments. Every

@@ -96,8 +96,8 @@ public static class CssAnimation
     {
         "ease" or "linear" or "ease-in" or "ease-out" or "ease-in-out"
             or "step-start" or "step-end" => true,
-        _ when text.StartsWith("steps(", System.StringComparison.OrdinalIgnoreCase) => true,
-        _ when text.StartsWith("cubic-bezier(", System.StringComparison.OrdinalIgnoreCase) => true,
+        _ when text.StartsWith("steps(", StringComparison.OrdinalIgnoreCase) => true,
+        _ when text.StartsWith("cubic-bezier(", StringComparison.OrdinalIgnoreCase) => true,
         _ => false,
     };
 

@@ -38,7 +38,7 @@ public sealed partial class CssStyleEngine
         {
             if (_registrations is not null)
                 return _registrations;
-            sheetsSnapshot = _sheets.ToArray();
+            sheetsSnapshot = [.. _sheets];
         }
 
         var registrations = new Dictionary<string, CustomPropertyRegistration>(StringComparer.OrdinalIgnoreCase);
@@ -53,27 +53,27 @@ public sealed partial class CssStyleEngine
     {
         foreach (var rule in rules)
         {
-            if (rule is CssAtRule atRule)
-            {
-                if (atRule.Name.Equals("property", StringComparison.OrdinalIgnoreCase) &&
-                    atRule.Declarations is { } declarations)
-                {
-                    var name = atRule.Prelude.Trim();
-                    if (name.StartsWith("--", StringComparison.Ordinal))
-                    {
-                        var inheritsValue = declarations.GetPropertyValue("inherits");
-                        registrations[name] = new CustomPropertyRegistration
-                        {
-                            Inherits = inheritsValue is null ||
-                                       !inheritsValue.Trim().Equals("false", StringComparison.OrdinalIgnoreCase),
-                            InitialValue = declarations.GetPropertyValue("initial-value"),
-                        };
-                    }
-                }
+            if (rule is not CssAtRule atRule)
+                continue;
 
-                if (atRule.Rules.Count > 0)
-                    CollectPropertyRules(atRule.Rules, registrations);
+            if (atRule.Name.Equals("property", StringComparison.OrdinalIgnoreCase) &&
+                atRule.Declarations is { } declarations)
+            {
+                var name = atRule.Prelude.Trim();
+                if (name.StartsWith("--", StringComparison.Ordinal))
+                {
+                    var inheritsValue = declarations.GetPropertyValue("inherits");
+                    registrations[name] = new CustomPropertyRegistration
+                    {
+                        Inherits = inheritsValue is null ||
+                                   !inheritsValue.Trim().Equals("false", StringComparison.OrdinalIgnoreCase),
+                        InitialValue = declarations.GetPropertyValue("initial-value"),
+                    };
+                }
             }
+
+            if (atRule.Rules.Count > 0)
+                CollectPropertyRules(atRule.Rules, registrations);
         }
     }
 
