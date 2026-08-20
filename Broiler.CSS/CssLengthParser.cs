@@ -980,6 +980,26 @@ public static class CssLengthParser
 
         if (v.EndsWith("px"))
             return TryParseLeadingNumber(v, 2, out var px) ? px : double.NaN;
+
+        // CSS Values 3 §5.2: the absolute units are fixed multiples of the reference pixel, so
+        // they resolve here with nothing else to consult — no font, no viewport — exactly like
+        // `px` above. They were simply missing, and the callers of this method act on the
+        // answer it gives: `IsLengthOrPercentage` asked it whether `72pt` is a length, was told
+        // no, and the `border` shorthand therefore read `border: 72pt solid red`'s first
+        // component as a *colour* — leaving the width at `medium` and dropping the red. The
+        // `in` spelling has to come after the viewport scan above, which claims `vmin`.
+        if (v.EndsWith("pt"))
+            return TryParseLeadingNumber(v, 2, out var pt) ? pt * CssMetrics.PtToPx : double.NaN;
+        if (v.EndsWith("pc"))
+            return TryParseLeadingNumber(v, 2, out var pc) ? pc * CssMetrics.PxPerPica : double.NaN;
+        if (v.EndsWith("in"))
+            return TryParseLeadingNumber(v, 2, out var inch) ? inch * CssMetrics.PxPerInch : double.NaN;
+        if (v.EndsWith("cm"))
+            return TryParseLeadingNumber(v, 2, out var cm) ? cm * CssMetrics.PxPerCm : double.NaN;
+        if (v.EndsWith("mm"))
+            return TryParseLeadingNumber(v, 2, out var mm) ? mm * CssMetrics.PxPerMm : double.NaN;
+        if (v.EndsWith("q"))
+            return TryParseLeadingNumber(v, 1, out var q) ? q * CssMetrics.PxPerQ : double.NaN;
         if (v.EndsWith("rem"))
             return TryParseLeadingNumber(v, 3, out var rem) ? rem * 16.0 : double.NaN;
         if (v.EndsWith("em"))
