@@ -1446,6 +1446,15 @@ public sealed partial class CssStyleEngine
     {
         var q = query.Trim();
 
+        // In a paged formatting context the `width`/`height` features describe the page area, not
+        // whatever surface the renderer allocated — and the *initial* page area, since a `@page`
+        // rule may itself sit inside a media query. See CssPagedMedia.
+        if (CssPagedMedia.Active)
+        {
+            viewportWidth = CssPagedMedia.Width;
+            viewportHeight = CssPagedMedia.Height;
+        }
+
         // An empty query inside a non-empty list ("screen, ") is malformed; only a
         // wholly empty list means `all`, and that is handled by the caller.
         if (q.Length == 0)
@@ -1529,13 +1538,16 @@ public sealed partial class CssStyleEngine
                 return MediaMatch.Invalid;
         }
 
-        // Broiler paints to a continuous screen surface, so `all` and `screen`
-        // match; every other well-formed media type (`print`, `speech`, and the
-        // deprecated `tv`/`handheld`/… set) simply does not — but stays valid, so
-        // `not print` correctly matches.
+        // Broiler paints to a continuous screen surface, so `all` and `screen` match — unless the
+        // document is being formatted for paged media, where `print` is the one that does and
+        // `screen` is the one that does not. Every other well-formed media type (`speech`, and the
+        // deprecated `tv`/`handheld`/… set) stays valid without matching, so `not print` is
+        // correct on either surface.
+        var surface = CssPagedMedia.Active ? "print" : "screen";
+
         return Matched(
             type.Equals("all", StringComparison.OrdinalIgnoreCase) ||
-            type.Equals("screen", StringComparison.OrdinalIgnoreCase));
+            type.Equals(surface, StringComparison.OrdinalIgnoreCase));
     }
 
     private static List<string> SplitMediaQueryParts(string query)

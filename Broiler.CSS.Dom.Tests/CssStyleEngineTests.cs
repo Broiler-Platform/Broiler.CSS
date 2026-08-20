@@ -21,6 +21,76 @@ public sealed class CssStyleEngineTests
                 new CssEnvironment(viewportWidth, viewportHeight)));
     }
 
+    // ---- the paged formatting context -------------------------------------
+
+    // A document being formatted for print is print media, and the `width`/`height` features then
+    // describe the page area rather than whatever surface the renderer allocated. Nothing pinned
+    // means continuous media, so every existing caller is unaffected.
+    [Fact]
+    public void A_Paged_Context_Is_Print_Media_And_Sizes_By_The_Page_Area()
+    {
+        var screenSized = new CssEnvironment(1024, 768);
+
+        Assert.False(CssStyleEngine.MatchesMediaQuery("print", screenSized));
+        Assert.True(CssStyleEngine.MatchesMediaQuery("screen", screenSized));
+
+        // 1024 wide, so this does not match — until the page area answers instead.
+        Assert.False(CssStyleEngine.MatchesMediaQuery("(max-width: 800px)", screenSized));
+
+        using (CssPagedMedia.Pin(480, 288))
+        {
+            Assert.True(CssStyleEngine.MatchesMediaQuery("print", screenSized));
+            Assert.False(CssStyleEngine.MatchesMediaQuery("screen", screenSized));
+
+            // 480 x 288 is the page area, not the 1024 x 768 the environment still carries.
+            Assert.True(CssStyleEngine.MatchesMediaQuery("(max-width: 800px)", screenSized));
+            Assert.True(CssStyleEngine.MatchesMediaQuery(
+                "(min-width: 4in) and (max-width: 5in) and (min-height: 2in) and (max-height: 3in)",
+                screenSized));
+        }
+
+        // ...and the context is restored, so a sibling render is unaffected.
+        Assert.False(CssStyleEngine.MatchesMediaQuery("print", screenSized));
+    }
+
+    // `not print` has to stay correct on both surfaces — it is the spelling a document uses to
+    // exclude itself from one of them.
+    [Fact]
+    public void Not_Print_Is_Correct_On_Either_Surface()
+    {
+        var environment = new CssEnvironment(800, 600);
+
+        Assert.True(CssStyleEngine.MatchesMediaQuery("not print", environment));
+
+        using (CssPagedMedia.Pin(480, 288))
+            Assert.False(CssStyleEngine.MatchesMediaQuery("not print", environment));
+    }
+
+    // A nested browsing context is its own formatting context: the embedder's page area is not the
+    // frame's viewport. css-page/media-queries-002-print and -003-print embed a 100 x 100 frame
+    // that asserts exactly this.
+    [Fact]
+    public void Suspending_Restores_The_Frames_Own_Viewport()
+    {
+        var frame = new CssEnvironment(100, 100);
+
+        using (CssPagedMedia.Pin(480, 288))
+        {
+            Assert.False(CssStyleEngine.MatchesMediaQuery(
+                "(width: 100px) and (height: 100px)", frame));
+
+            using (CssPagedMedia.Suspend())
+            {
+                Assert.True(CssStyleEngine.MatchesMediaQuery(
+                    "(width: 100px) and (height: 100px)", frame));
+                Assert.False(CssStyleEngine.MatchesMediaQuery("print", frame));
+            }
+
+            // The enclosing paged context comes back when the frame is done.
+            Assert.True(CssStyleEngine.MatchesMediaQuery("print", frame));
+        }
+    }
+
     // An empty <media-query-list> is `all`: `@media { … }` (whitespace after the
     // at-keyword is optional) and `<style media="">` apply unconditionally.
     [Theory]
