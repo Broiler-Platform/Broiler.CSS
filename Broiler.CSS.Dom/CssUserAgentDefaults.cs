@@ -29,6 +29,7 @@ public static class CssUserAgentDefaults
             ["dl"] = "block",
             ["dt"] = "block",
             ["fieldset"] = "block",
+            ["legend"] = "block",
             ["form"] = "block",
             ["frame"] = "block",
             ["frameset"] = "block",
