@@ -4,7 +4,7 @@ namespace Broiler.CSS.Tests;
 
 public sealed class CssArchitectureTests
 {
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Kernel_Has_No_NonFramework_Assembly_Dependencies()
     {
         var dependencies = typeof(CssParser).Assembly
@@ -20,7 +20,7 @@ public sealed class CssArchitectureTests
         Assert.Empty(dependencies);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Project_Has_No_Project_Or_Package_References()
     {
         var projectPath = FindProjectPath();
@@ -30,7 +30,7 @@ public sealed class CssArchitectureTests
         Assert.DoesNotContain("<PackageReference", projectText, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Public_Surface_Does_Not_Leak_Other_Broiler_Types()
     {
         var leaks = typeof(CssParser).Assembly
@@ -52,7 +52,7 @@ public sealed class CssArchitectureTests
         Assert.Empty(leaks);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Mutable_Collections_Are_Not_Publicly_Exposed()
     {
         var leaks = typeof(CssParser).Assembly

@@ -99,7 +99,7 @@ public sealed class CssSelectorMatcherValidityTests
     /// exact expectation <c>form-validation-validity-textarea-defaultValue</c> encodes when it
     /// requires <c>&lt;textarea minlength=5 required&gt;a&lt;/textarea&gt;</c> to be valid.
     /// </summary>
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void MinLength_DoesNotInvalidate_BecauseNothingWasUserEdited()
     {
         var (matcher, target, _) = Build((d, b) =>
@@ -123,7 +123,7 @@ public sealed class CssSelectorMatcherValidityTests
 
     /// <summary>A control inside a disabled <c>&lt;fieldset&gt;</c> is disabled too, so it is
     /// barred even though it carries no <c>disabled</c> attribute of its own.</summary>
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void ControlInsideDisabledFieldset_IsBarred()
     {
         var (matcher, target, _) = Build((d, b) =>
@@ -227,7 +227,7 @@ public sealed class CssSelectorMatcherValidityTests
 
     /// <summary>A <c>pattern</c> is anchored at both ends: a value that merely contains a match
     /// is still a mismatch.</summary>
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Pattern_IsAnchoredAtBothEnds()
     {
         var (matcher, target, _) = Build((d, b) => Add(d, b, "input", id: "x",
@@ -255,7 +255,7 @@ public sealed class CssSelectorMatcherValidityTests
         Assert.Equal(expected, State(matcher, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void MaxLength_DoesNotInvalidate()
     {
         var (matcher, target, _) = Build((d, b) =>
@@ -285,7 +285,7 @@ public sealed class CssSelectorMatcherValidityTests
         Assert.Equal(expected, State(matcher, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void EmptyForm_IsValid()
     {
         var (matcher, target, _) = Build((d, b) => Add(d, b, "form", id: "x"));

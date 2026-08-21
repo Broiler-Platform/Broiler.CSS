@@ -37,7 +37,7 @@ public sealed class CssLengthTests
         Assert.Equal(isRelative, len.IsRelative);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Percentage_Stores_Fraction_And_Flags_It()
     {
         var len = new CssLength("50%");
@@ -86,7 +86,7 @@ public sealed class CssLengthTests
         Assert.Equal(double.Parse(text, System.Globalization.CultureInfo.InvariantCulture), len.Number, 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void ConvertEmToPoints_Drives_The_FontSize_Path()
     {
         // Mirrors CssBoxProperties font-size resolution: an em length converts to

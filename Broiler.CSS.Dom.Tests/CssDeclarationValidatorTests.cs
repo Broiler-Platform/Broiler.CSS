@@ -60,21 +60,21 @@ public sealed class CssDeclarationValidatorTests
         Assert.Equal(expected, CssDeclarationValidator.IsAcceptableDeclarationValue(property, value));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void IsAcceptableDeclarationValue_Is_Case_Insensitive_On_Property_And_Value()
     {
         Assert.True(CssDeclarationValidator.IsAcceptableDeclarationValue("DISPLAY", "BLOCK"));
         Assert.False(CssDeclarationValidator.IsAcceptableDeclarationValue("Display", "Bogus"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void IsAcceptableDeclarationValue_Rejects_Null_Property()
     {
         Assert.Throws<ArgumentNullException>(
             () => CssDeclarationValidator.IsAcceptableDeclarationValue(null!, "block"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void IsAcceptableDeclarationValue_Treats_Null_Value_As_Unacceptable()
     {
         Assert.False(CssDeclarationValidator.IsAcceptableDeclarationValue("color", null!));

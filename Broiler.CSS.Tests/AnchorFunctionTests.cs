@@ -42,14 +42,14 @@ public sealed class AnchorFunctionTests
         Assert.Equal("X", result);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Rewrite_ReplacesEmbeddedFunctionOnly()
     {
         var result = AnchorFunction.Rewrite("calc(anchor(--a bottom) + 5px)", _ => "100px");
         Assert.Equal("calc(100px + 5px)", result);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Rewrite_ReplacesEveryReference()
     {
         int n = 0;
@@ -85,14 +85,14 @@ public sealed class AnchorFunctionTests
         Assert.Equal("Y", result);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void RewriteSize_DoesNotMatchPlainAnchor()
     {
         var result = AnchorFunction.RewriteSize("anchor(--a top)", _ => "SHOULD_NOT_APPEAR");
         Assert.Equal("anchor(--a top)", result);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void TryGetFirst_ReturnsFirstReference()
     {
         Assert.True(AnchorFunction.TryGetFirst("width: anchor(--a right) 0", out var r));

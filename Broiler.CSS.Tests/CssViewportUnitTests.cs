@@ -64,7 +64,7 @@ public sealed class CssViewportUnitTests
         Assert.Equal(600, Parse("100vi", writingMode), 6);  // inline axis = height
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Physical_Viewport_Units_Ignore_The_Writing_Mode()
     {
         Assert.Equal(800, Parse("100vw", "vertical-rl"), 6);
@@ -93,7 +93,7 @@ public sealed class CssViewportUnitTests
 
     // "svmin" must not be scanned as a stray 's' followed by "vmin" — that would
     // leave "1s" as the number and fail to parse.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Longest_Unit_Spelling_Wins()
     {
         Assert.Equal(600, Parse("100svmin"), 6);
@@ -148,14 +148,14 @@ public sealed class CssViewportUnitTests
         Assert.Equal(expected, CssLengthParser.ParseToPixels(value, 800, 600), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void ParseToPixels_Honours_The_Root_Writing_Mode()
     {
         Assert.Equal(800, CssLengthParser.ParseToPixels("100vb", 800, 600, "vertical-rl"), 6);
         Assert.Equal(600, CssLengthParser.ParseToPixels("100vi", 800, 600, "vertical-rl"), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Logical_Units_Compose_Inside_Calc()
     {
         Assert.Equal(310, Parse("calc(50vb + 10px)"), 6);

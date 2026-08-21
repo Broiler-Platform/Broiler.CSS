@@ -71,7 +71,7 @@ public sealed class CssCascadeRuleIndexTests
         return element;
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Id_Class_And_Type_Keyed_Rules_Cascade_As_They_Did()
     {
         AssertCascadesAgree(
@@ -92,7 +92,7 @@ public sealed class CssCascadeRuleIndexTests
             });
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Source_Order_Still_Breaks_A_Specificity_Tie()
     {
         // The index visits only candidates, so if it visited them in bucket order rather than
@@ -102,7 +102,7 @@ public sealed class CssCascadeRuleIndexTests
             body => Add(body, "div", className: "c"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void A_Rule_Reachable_Through_Two_Keys_Is_Applied_Once()
     {
         AssertCascadesAgree(
@@ -110,7 +110,7 @@ public sealed class CssCascadeRuleIndexTests
             body => Add(body, "div", className: "a b"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Descendant_And_Child_Combinators_Key_On_The_Subject()
     {
         AssertCascadesAgree(
@@ -151,7 +151,7 @@ public sealed class CssCascadeRuleIndexTests
             });
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void A_Pseudo_Element_Rule_Keys_On_The_Element_It_Is_Attached_To()
     {
         AssertCascadesAgree(
@@ -159,7 +159,7 @@ public sealed class CssCascadeRuleIndexTests
             body => Add(body, "div", className: "c"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Rules_Inside_A_Matching_Media_Query_Are_Indexed()
     {
         AssertCascadesAgree(
@@ -168,7 +168,7 @@ public sealed class CssCascadeRuleIndexTests
             new CssEnvironment(800, 600));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Rules_Inside_A_Non_Matching_Media_Query_Are_Dropped()
     {
         AssertCascadesAgree(
@@ -177,7 +177,7 @@ public sealed class CssCascadeRuleIndexTests
             new CssEnvironment(800, 600));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Rules_Inside_A_Supports_Condition_Follow_The_Condition()
     {
         AssertCascadesAgree(
@@ -188,7 +188,7 @@ public sealed class CssCascadeRuleIndexTests
             body => Add(body, "div"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Nested_Conditional_Groups_Follow_Every_Enclosing_Condition()
     {
         AssertCascadesAgree(
@@ -197,7 +197,7 @@ public sealed class CssCascadeRuleIndexTests
             new CssEnvironment(800, 600));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void A_Sheet_Added_After_The_First_Cascade_Rebuilds_The_Index()
     {
         // The index is memoized against the sheet set; a stale one would silently ignore a sheet
@@ -213,7 +213,7 @@ public sealed class CssCascadeRuleIndexTests
         Assert.Equal("green", engine.GetCascadedStyle(div)["color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Clearing_The_Sheets_Empties_The_Index()
     {
         var (_, _, body) = NewDocument();
@@ -227,7 +227,7 @@ public sealed class CssCascadeRuleIndexTests
         Assert.False(engine.GetCascadedStyle(div).ContainsKey("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Changing_The_Viewport_Re_Resolves_Media_Queries()
     {
         var (_, _, body) = NewDocument();
@@ -242,7 +242,7 @@ public sealed class CssCascadeRuleIndexTests
         Assert.Equal("green", engine.GetCascadedStyle(div)["color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void The_Index_Agrees_With_The_Scan_Across_A_Generated_Sheet_And_Document()
     {
         // The shape the measurement used: many rules, few matches. Generated rather than
@@ -271,7 +271,7 @@ public sealed class CssCascadeRuleIndexTests
     private static string CultureInvariant(FormattableString text) =>
         FormattableString.Invariant(text);
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void The_Index_Files_Keyed_Rules_Away_From_The_Universal_Bucket()
     {
         // The performance claim, stated as a property rather than a timing: of these six rules
@@ -293,7 +293,7 @@ public sealed class CssCascadeRuleIndexTests
         Assert.Equal(2, index.UniversalRuleCount);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void An_Element_Only_Sees_Rules_Its_Own_Keys_Reach()
     {
         var index = CssCascadeRuleIndex.Build(
@@ -319,7 +319,7 @@ public sealed class CssCascadeRuleIndexTests
         Assert.Equal([0, 1, 2], candidates);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Candidates_Come_Back_In_Document_Order()
     {
         var index = CssCascadeRuleIndex.Build(

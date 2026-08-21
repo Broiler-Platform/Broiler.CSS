@@ -21,7 +21,7 @@ public sealed class CssStyleScopeBuilderTests
     private static CssStyleScopeBuilder.StyleSource Src(
         string css, string? media = null, CssOrigin origin = CssOrigin.Author) => new(css, origin, media);
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Applies_Sheet_With_No_Media()
     {
         var (_, div) = NewDocWithDiv();
@@ -29,7 +29,7 @@ public sealed class CssStyleScopeBuilderTests
         Assert.Equal("red", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Excludes_Print_Media_On_Screen_Viewport()
     {
         var (_, div) = NewDocWithDiv();
@@ -41,7 +41,7 @@ public sealed class CssStyleScopeBuilderTests
         Assert.Equal("rgb(0, 0, 0)", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Includes_Screen_And_All_Media()
     {
         var (_, div) = NewDocWithDiv();
@@ -53,7 +53,7 @@ public sealed class CssStyleScopeBuilderTests
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Filters_By_Viewport_Width_Media_Query_And_Resyncs()
     {
         var (_, div) = NewDocWithDiv();
@@ -68,7 +68,7 @@ public sealed class CssStyleScopeBuilderTests
         Assert.Equal("rgb(0, 0, 0)", narrow.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Preserves_Document_Order_Across_Separate_Sheets()
     {
         var (_, div) = NewDocWithDiv();
@@ -79,7 +79,7 @@ public sealed class CssStyleScopeBuilderTests
         Assert.Equal("blue", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Respects_Cascade_Origin()
     {
         var (_, div) = NewDocWithDiv();
@@ -92,7 +92,7 @@ public sealed class CssStyleScopeBuilderTests
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Reflects_Changed_Source_Text()
     {
         var (_, div) = NewDocWithDiv();
@@ -106,11 +106,11 @@ public sealed class CssStyleScopeBuilderTests
             builder.Sync([Src("div { color: blue; }")], env).GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Sync_Null_Sources_Throws() =>
         Assert.Throws<ArgumentNullException>(() => NewBuilder().Sync(null!, CssEnvironment.Headless));
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Constructor_Null_Engine_Throws() =>
         Assert.Throws<ArgumentNullException>(() => new CssStyleScopeBuilder(null!));
 }

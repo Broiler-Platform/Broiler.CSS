@@ -27,7 +27,7 @@ public sealed class CssomRuleMetadataTests
         Assert.Equal((int)expected, CssomRuleMetadata.GetCssomTypeNumber(ParseSingleRule(css)));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSelectorText_Joins_Selectors_Like_The_Serializer()
     {
         var rule = Assert.IsType<CssStyleRule>(ParseSingleRule(".card, #hero:hover { color: red }"));
@@ -42,7 +42,7 @@ public sealed class CssomRuleMetadataTests
         Assert.Equal(expected, CssomRuleMetadata.GetKeyframesName((CssAtRule)ParseSingleRule(css)));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCharsetEncoding_Unquotes()
     {
         Assert.Equal("utf-8", CssomRuleMetadata.GetCharsetEncoding((CssAtRule)ParseSingleRule("@charset \"utf-8\";")));
@@ -69,7 +69,7 @@ public sealed class CssomRuleMetadataTests
         Assert.Equal(uri, ns.Uri);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void At_Rule_Prelude_And_Declarations_Are_Model_Metadata()
     {
         // media/supports/layer/page/property/counter-style names are the trimmed

@@ -23,35 +23,35 @@ public sealed class CssLengthZoomTests
         finally { CssLengthParser.SetElementZoom(1.0, 1.0); }
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Default_Factors_Leave_Calc_Unscaled()
     {
         // No opt-in (1.0, 1.0): byte-identical to the pre-zoom parser.
         Assert.Equal(30, Parse("calc(10px + 20px)", 0, 16, 1.0, 1.0), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Calc_AbsoluteTerms_Scale_By_AbsoluteZoom()
     {
         // (10 + 20)px × 2 = 60.
         Assert.Equal(60, Parse("calc(10px + 20px)", 0, 16, 2.0, 1.0), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Calc_Rem_Scales_By_AbsoluteZoom()
     {
         // rem is root-relative (16px default) and counts as absolute for element zoom: 2rem = 32 × 2 = 64.
         Assert.Equal(64, Parse("calc(2rem)", 0, 16, 2.0, 1.0), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Calc_Percent_Scales_By_PercentZoom_And_Absolute_By_AbsoluteZoom()
     {
         // 50% of 200 = 100 × pctZoom 3 = 300; 10px × absZoom 2 = 20; total 320.
         Assert.Equal(320, Parse("calc(50% + 10px)", 200, 16, 2.0, 3.0), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Calc_Em_Rides_The_Zoomed_Font_And_Is_Not_ReScaled()
     {
         // em uses the caller's emFactor (already zoomed by the engine); the absolute-zoom factor must
@@ -59,7 +59,7 @@ public sealed class CssLengthZoomTests
         Assert.Equal(32, Parse("calc(2em)", 0, 16, 2.0, 1.0), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Calc_Viewport_Units_Are_Unaffected_By_ElementZoom()
     {
         CssLengthParser.SetViewportSize(1000, 1000); // 1vw = 10px
@@ -67,7 +67,7 @@ public sealed class CssLengthZoomTests
         Assert.Equal(100, Parse("calc(10vw)", 0, 16, 2.0, 1.0), 6);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Bare_Absolute_Length_Also_Honours_AbsoluteZoom()
     {
         // A non-calc length routes through the same evaluator, so the hook is uniform: 25px × 2 = 50.

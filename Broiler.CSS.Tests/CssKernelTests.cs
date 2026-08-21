@@ -2,7 +2,7 @@ namespace Broiler.CSS.Tests;
 
 public sealed class CssKernelTests
 {
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parser_Preserves_Rules_AtRules_And_Raw_Values()
     {
         const string css = """
@@ -33,7 +33,7 @@ public sealed class CssKernelTests
         Assert.Equal("RED", style.Declarations.GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Declaration_Parser_Recovers_And_Last_Declaration_Wins()
     {
         var declarations = new CssParser().ParseDeclarations(
@@ -96,7 +96,7 @@ public sealed class CssKernelTests
         Assert.Equal(new CssColor(red, green, blue, alpha), color);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Serialization_Is_Deterministic_And_RoundTrips()
     {
         const string source = """
@@ -112,7 +112,7 @@ public sealed class CssKernelTests
         Assert.Contains("color: RED !important;", first, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Individual_Rules_And_Declaration_Blocks_Can_Be_Serialized()
     {
         var parser = new CssParser();
@@ -127,7 +127,7 @@ public sealed class CssKernelTests
             CssSerializer.Serialize(styleRule.Declarations).ReplaceLineEndings("\n"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parser_Reports_Unterminated_And_Malformed_Input()
     {
         var sheet = new CssParser().ParseStyleSheet(
@@ -138,7 +138,7 @@ public sealed class CssKernelTests
         Assert.Equal(2, sheet.Rules.Count);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Unclosed_Parenthesis_In_Value_Swallows_Following_Braces_Until_Matched()
     {
         // CSS Syntax "consume a simple block": a } that sits inside an unclosed
@@ -161,7 +161,7 @@ public sealed class CssKernelTests
             static rule => rule.Selectors.Selectors.Any(static selector => selector.Text == "body"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Phase_Zero_Corpus_Parses_And_Serializes_Stably()
     {
         var corpusPath = FindCorpusPath();

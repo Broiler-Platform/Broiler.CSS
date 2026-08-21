@@ -32,7 +32,7 @@ public sealed class CssStyleEngineContainerQueryTests
     private static string ColorOf(CssStyleEngine engine, DomElement element) =>
         engine.GetComputedStyle(element).GetPropertyValue("color");
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Matching_Min_Width_Applies_The_Rule()
     {
         var (engine, target) = BuildScoped(
@@ -42,7 +42,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(1, 2, 3)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Non_Matching_Min_Width_Does_Not_Apply()
     {
         var (engine, target) = BuildScoped(
@@ -53,7 +53,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Range_Syntax_Is_Evaluated()
     {
         var (engine, target) = BuildScoped(
@@ -63,7 +63,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(1, 2, 3)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Max_Width_Colon_Form_Is_Evaluated()
     {
         var (engine, target) = BuildScoped(
@@ -73,7 +73,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(1, 2, 3)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Named_Container_Only_Matches_Its_Name()
     {
         var (engine, target) = BuildScoped(
@@ -84,7 +84,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Height_Query_Against_Inline_Size_Container_Does_Not_Apply()
     {
         var (engine, target) = BuildScoped(
@@ -95,7 +95,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Auto_Width_Container_Is_Unresolved_And_Does_Not_Apply()
     {
         var (engine, target) = BuildScoped(
@@ -106,7 +106,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Backdrop_Pseudo_Display_None_Via_Container_On_The_Element_Itself()
     {
         // A pseudo-element's query container search includes its originating element, so a dialog that
@@ -147,7 +147,7 @@ public sealed class CssStyleEngineContainerQueryTests
         return (engine, target);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Matches_A_Custom_Property()
     {
         var (engine, target) = BuildStyleScoped(
@@ -157,7 +157,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(1, 2, 3)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Does_Not_Match_A_Different_Value()
     {
         var (engine, target) = BuildStyleScoped(
@@ -167,7 +167,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Does_Not_Match_A_Missing_Property()
     {
         var (engine, target) = BuildStyleScoped(
@@ -179,7 +179,7 @@ public sealed class CssStyleEngineContainerQueryTests
 
     // The case from the issue: a <color> property set to contrast-color(#000) computes to white,
     // so `style(--contrast-color: white)` matches even though the tokens differ.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Matches_A_Resolved_Contrast_Color()
     {
         var (engine, target) = BuildStyleScoped(
@@ -191,7 +191,7 @@ public sealed class CssStyleEngineContainerQueryTests
 
     // contrast-color(#fff) is BLACK, so the same query must not match — the discriminating half
     // of the pair, without which "matches" could just mean "always true".
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Does_Not_Match_The_Opposite_Contrast_Color()
     {
         var (engine, target) = BuildStyleScoped(
@@ -202,7 +202,7 @@ public sealed class CssStyleEngineContainerQueryTests
     }
 
     // A <color> property compares as a colour, not as a token stream.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Compares_Colors_Not_Spelling()
     {
         var (engine, target) = BuildStyleScoped(
@@ -214,7 +214,7 @@ public sealed class CssStyleEngineContainerQueryTests
 
     // `style` is a function, not a container name: reading it as one sent the lookup hunting for
     // container-name: style, found nothing, and made every style query false.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Is_Not_Mistaken_For_A_Container_Name()
     {
         var (engine, target) = BuildStyleScoped(
@@ -224,7 +224,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(1, 2, 3)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Honours_A_Container_Name()
     {
         var document = new DomDocument();
@@ -248,7 +248,7 @@ public sealed class CssStyleEngineContainerQueryTests
     }
 
     // Custom properties inherit, so a style query resolves through the ancestor chain.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Sees_An_Inherited_Custom_Property()
     {
         var document = new DomDocument();
@@ -269,7 +269,7 @@ public sealed class CssStyleEngineContainerQueryTests
 
     // A style query on a non-custom property is not supported; it must fall through to
     // "not applied" rather than guess.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_On_A_Standard_Property_Does_Not_Apply()
     {
         var (engine, target) = BuildStyleScoped(
@@ -286,7 +286,7 @@ public sealed class CssStyleEngineContainerQueryTests
     // which is why one bug gated 68 tests. These cases must terminate — reaching the assertion at
     // all is the substance of the guard.
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Value_Function_In_A_Range_Feature_Does_Not_Recurse()
     {
         var (engine, target) = BuildScoped(
@@ -298,7 +298,7 @@ public sealed class CssStyleEngineContainerQueryTests
         Assert.Equal("rgb(9, 9, 9)", ColorOf(engine, target));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Value_Function_In_A_Colon_Feature_Does_Not_Recurse()
     {
         var (engine, target) = BuildScoped(
@@ -325,7 +325,7 @@ public sealed class CssStyleEngineContainerQueryTests
     }
 
     // A '(' that never closes is malformed, not nesting; it must degrade to "not applied".
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Unbalanced_Prelude_Does_Not_Apply()
     {
         var (engine, target) = BuildScoped(
@@ -358,7 +358,7 @@ public sealed class CssStyleEngineContainerQueryTests
     // A style() query grouped with a size query: the group's own parentheses are nesting, but
     // style()'s are its argument list. Matching them by balance rather than by the last character
     // is what keeps the two apart.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Style_Query_Combined_With_A_Size_Query_Evaluates_Both_Halves()
     {
         var document = new DomDocument();

@@ -60,7 +60,7 @@ public sealed class CssSystemColorsTests
         Assert.Equal(new CssColor(r, g, b), color);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Light_And_Dark_Disagree_On_Canvas()
     {
         Assert.True(CssSystemColors.TryResolve("Canvas", CssColorScheme.Light, out var light));
@@ -116,7 +116,7 @@ public sealed class CssSystemColorsTests
         Assert.False(CssSystemColors.IsSystemColor(name!));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void IsSystemColor_Recognises_Current_And_Deprecated_Keywords()
     {
         Assert.True(CssSystemColors.IsSystemColor("Canvas"));

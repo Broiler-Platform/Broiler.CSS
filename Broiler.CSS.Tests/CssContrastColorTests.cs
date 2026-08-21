@@ -44,7 +44,7 @@ public sealed class CssContrastColorTests
 
     // The threshold is where the two WCAG contrast ratios are equal, not luminance 0.5 —
     // a mid grey is light enough that black contrasts better.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void The_Threshold_Is_The_Equal_Contrast_Luminance_Not_Mid_Grey()
     {
         Assert.True(CssValueParser.TryParseColor("#767676", out var justLight));
@@ -54,7 +54,7 @@ public sealed class CssContrastColorTests
         Assert.Equal(White, CssContrastColor.Pick(justDark));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Relative_Luminance_Spans_Zero_To_One()
     {
         Assert.Equal(0.0, CssContrastColor.RelativeLuminance(Black), 6);
@@ -89,7 +89,7 @@ public sealed class CssContrastColorTests
     }
 
     // The function is a <color>, so the ordinary colour parser must accept it.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void TryParseColor_Accepts_The_Function()
     {
         Assert.True(CssValueParser.TryParseColor("contrast-color(#000)", out var color));
@@ -100,7 +100,7 @@ public sealed class CssContrastColorTests
     // to CssSystemColors. Asserted with Field/FieldText because those resolve both before and
     // after patch 0036 fills in the rest of the CSS Color 4 §6 table (problem 28) — this test must
     // not depend on whether that patch has been applied.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void TryParseColor_Routes_To_System_Colors()
     {
         Assert.True(CssValueParser.TryParseColor("Field", out var field));
@@ -109,7 +109,7 @@ public sealed class CssContrastColorTests
         Assert.Equal(Black, fieldText);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void ResolveFunctions_Rewrites_Occurrences_In_Place()
     {
         Assert.Equal(

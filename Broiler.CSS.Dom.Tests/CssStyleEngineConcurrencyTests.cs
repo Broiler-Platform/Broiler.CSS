@@ -20,7 +20,7 @@ namespace Broiler.CSS.Dom.Tests;
 /// </summary>
 public sealed class CssStyleEngineConcurrencyTests
 {
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Concurrent_Style_Queries_And_Invalidations_Do_Not_Corrupt_Caches()
     {
         var document = new DomDocument();
@@ -97,7 +97,7 @@ public sealed class CssStyleEngineConcurrencyTests
     /// with an identical sheet set is driven from every thread at once and compared property by
     /// property.
     /// </remarks>
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parallel_Cascade_Matches_The_Sequential_Cascade_Property_For_Property()
     {
         const string sheet =

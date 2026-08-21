@@ -5,7 +5,7 @@ namespace Broiler.CSS.Dom.Tests;
 
 public sealed class CssDomArchitectureTests
 {
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Production_Project_References_Only_Css_And_Dom()
     {
         var project = XDocument.Load(FindProjectPath());
@@ -19,7 +19,7 @@ public sealed class CssDomArchitectureTests
         Assert.Empty(project.Descendants("PackageReference"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Public_Surface_Does_Not_Leak_Consumer_Types()
     {
         var assembly = typeof(CssSelectorMatcher).Assembly;
@@ -37,7 +37,7 @@ public sealed class CssDomArchitectureTests
         Assert.Empty(forbidden);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Public_Surface_Does_Not_Expose_Mutable_Collections()
     {
         var assembly = typeof(CssStyleEngine).Assembly;

@@ -26,7 +26,7 @@ public sealed class CssStyleEngineTests
     // A document being formatted for print is print media, and the `width`/`height` features then
     // describe the page area rather than whatever surface the renderer allocated. Nothing pinned
     // means continuous media, so every existing caller is unaffected.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void A_Paged_Context_Is_Print_Media_And_Sizes_By_The_Page_Area()
     {
         var screenSized = new CssEnvironment(1024, 768);
@@ -55,7 +55,7 @@ public sealed class CssStyleEngineTests
 
     // `not print` has to stay correct on both surfaces — it is the spelling a document uses to
     // exclude itself from one of them.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Not_Print_Is_Correct_On_Either_Surface()
     {
         var environment = new CssEnvironment(800, 600);
@@ -69,7 +69,7 @@ public sealed class CssStyleEngineTests
     // A nested browsing context is its own formatting context: the embedder's page area is not the
     // frame's viewport. css-page/media-queries-002-print and -003-print embed a 100 x 100 frame
     // that asserts exactly this.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Suspending_Restores_The_Frames_Own_Viewport()
     {
         var frame = new CssEnvironment(100, 100);
@@ -241,7 +241,7 @@ public sealed class CssStyleEngineTests
         Assert.False(CssStyleEngine.MatchesMediaQuery(query, new CssEnvironment(800, 600)));
 
     // Media Queries 5 §3: `@custom-media` names a query list that `(--name)` stands for.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void CustomMedia_Reference_Resolves_To_Its_Definition()
     {
         var (_, _, body) = NewDocument();
@@ -255,7 +255,7 @@ public sealed class CssStyleEngineTests
 
     // A definition is document-global, not order-dependent: it applies to a reference
     // that appears above it.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void CustomMedia_Definition_Applies_To_An_Earlier_Reference()
     {
         var (_, _, body) = NewDocument();
@@ -267,7 +267,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("lime", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void CustomMedia_Reference_That_Does_Not_Match_Applies_Nothing()
     {
         var (_, _, body) = NewDocument();
@@ -316,7 +316,7 @@ public sealed class CssStyleEngineTests
 
     // css/css-conditional/at-media-whitespace-optional-001: `@media{ … }` has an
     // empty query list, so its rules cascade like any unconditional rule.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void MediaRule_With_Empty_Prelude_Applies()
     {
         var (_, _, body) = NewDocument();
@@ -327,7 +327,7 @@ public sealed class CssStyleEngineTests
 
     // css/mediaqueries/mq-invalid-media-type-layer-002: `@media not layer` is a
     // syntax error, not a negated unknown media type, so its rules never apply.
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void MediaRule_With_Layer_Media_Type_Never_Applies()
     {
         var (_, _, body) = NewDocument();
@@ -382,7 +382,7 @@ public sealed class CssStyleEngineTests
         return (document, html, body);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Cascade_Resolves_By_Specificity_Then_Source_Order()
     {
         var (_, _, body) = NewDocument();
@@ -396,7 +396,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Cascade_Later_Declaration_Wins_On_Specificity_Tie()
     {
         var (_, _, body) = NewDocument();
@@ -409,7 +409,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Important_Declaration_Beats_Higher_Specificity_Normal()
     {
         var (_, _, body) = NewDocument();
@@ -423,7 +423,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Inline_Style_Beats_Selector_Declarations()
     {
         var (_, _, body) = NewDocument();
@@ -436,7 +436,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("orange", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Inherited_Property_Flows_To_Child_Without_Own_Declaration()
     {
         var (_, _, body) = NewDocument();
@@ -451,7 +451,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("purple", engine.GetComputedStyle(child).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Non_Inherited_Property_Falls_Back_To_Initial_Value()
     {
         var (_, _, body) = NewDocument();
@@ -466,7 +466,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("rgb(0, 0, 0)", style.GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Shorthand_Margin_Expands_To_Longhands()
     {
         var (_, _, body) = NewDocument();
@@ -482,7 +482,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("20px", style.GetPropertyValue("margin-left"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Shorthand_Background_Single_Layer_Expands_To_Longhands()
     {
         var (_, _, body) = NewDocument();
@@ -499,7 +499,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("50px 60px", style.GetPropertyValue("background-size"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Shorthand_Background_Preserves_All_Comma_Separated_Layers()
     {
         var (_, _, body) = NewDocument();
@@ -527,7 +527,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("transparent", style.GetPropertyValue("background-color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Shorthand_Background_Does_Not_Override_Explicit_Attachment_Longhand()
     {
         var (_, _, body) = NewDocument();
@@ -546,7 +546,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("scroll, fixed", style.GetPropertyValue("background-attachment"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Custom_Property_Is_Inherited_And_Var_Is_Resolved()
     {
         var (_, html, body) = NewDocument();
@@ -559,7 +559,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("teal", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Var_Falls_Back_When_Custom_Property_Is_Missing()
     {
         var (_, _, body) = NewDocument();
@@ -571,7 +571,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("crimson", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Env_Unknown_Name_Falls_Back_To_Provided_Default()
     {
         var (_, _, body) = NewDocument();
@@ -586,7 +586,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("crimson", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Env_Unknown_Name_Resolves_Nested_Var_Fallback()
     {
         var (_, _, body) = NewDocument();
@@ -601,7 +601,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("rgb(0, 128, 0)", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Env_Unknown_Name_Without_Fallback_Is_Invalid_And_Overrides_Previous()
     {
         var (_, _, body) = NewDocument();
@@ -620,7 +620,7 @@ public sealed class CssStyleEngineTests
         Assert.DoesNotContain("env(", bg);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Env_Reference_Is_A_Supported_Feature_Query()
     {
         var (_, _, body) = NewDocument();
@@ -636,7 +636,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("rgb(0, 128, 0)", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Cyclic_Custom_Properties_Resolve_To_Invalid_Without_Exhausting_Memory()
     {
         var (_, html, body) = NewDocument();
@@ -656,7 +656,7 @@ public sealed class CssStyleEngineTests
         Assert.True(color.Length < 64);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Acyclic_Exponential_Custom_Property_Chain_Falls_Back_Without_Exhausting_Memory()
     {
         var (_, html, body) = NewDocument();
@@ -680,7 +680,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", bg);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Self_Referential_Custom_Property_Does_Not_Recurse_Forever()
     {
         var (_, html, body) = NewDocument();
@@ -695,7 +695,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("10px", width);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Media_Query_Applies_Only_When_Environment_Matches()
     {
         var (_, _, body) = NewDocument();
@@ -708,7 +708,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", engine.GetComputedStyle(div, new CssEnvironment(800, 600)).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Pseudo_Element_Rules_Match_Only_For_That_Pseudo()
     {
         var (_, _, body) = NewDocument();
@@ -721,7 +721,7 @@ public sealed class CssStyleEngineTests
         Assert.NotEqual("\"hi\"", engine.GetComputedStyle(div).GetPropertyValue("content"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Relative_Font_Weight_Resolves_Against_Inherited_Weight()
     {
         var (_, _, body) = NewDocument();
@@ -761,7 +761,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("Ahem", style.GetPropertyValue("font-family"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Font_Shorthand_Without_LineHeight_Keeps_Family()
     {
         var (_, _, body) = NewDocument();
@@ -776,7 +776,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("Ahem", style.GetPropertyValue("font-family"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Computed_Style_Is_Recomputed_After_Attribute_Mutation()
     {
         var (_, _, body) = NewDocument();
@@ -792,7 +792,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Adding_A_Stylesheet_Invalidates_Cached_Results()
     {
         var (_, _, body) = NewDocument();
@@ -807,7 +807,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Declared_Cascade_Is_Memoized_But_Invalidated_By_Mutation_And_Stylesheet_Changes()
     {
         // Guards the declared-cascade memo (CollectCascadedDeclarations cache): the
@@ -833,7 +833,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", engine.GetCascadedStyle(div)["color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Registered_Custom_Property_Honours_Inherits_False()
     {
         var (_, html, body) = NewDocument();
@@ -848,14 +848,14 @@ public sealed class CssStyleEngineTests
         Assert.Equal("2px", style.GetPropertyValue("--g"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Missing_Element_Returns_Empty_Style()
     {
         var engine = EngineWith("div { color: red; }");
         Assert.Same(CssComputedStyle.Empty, engine.GetComputedStyle(null!));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Invalid_Closed_Keyword_Value_Is_Discarded_Previous_Wins()
     {
         var (_, _, body) = NewDocument();
@@ -934,7 +934,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal(whiteSpace, engine.GetComputedStyle(div).GetPropertyValue("white-space"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Invalid_Vendor_Color_Is_Rejected_But_Standard_Prefixes_Pass()
     {
         var (_, _, body) = NewDocument();
@@ -948,7 +948,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("red", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Invalid_Inline_Declaration_Is_Discarded()
     {
         var (_, _, body) = NewDocument();
@@ -962,7 +962,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("flex", engine.GetComputedStyle(div).GetPropertyValue("display"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Valid_Custom_Property_With_Closed_Keyword_Name_Is_Not_Validated()
     {
         var (_, _, body) = NewDocument();
@@ -978,7 +978,7 @@ public sealed class CssStyleEngineTests
 
     // ---- GetCascadedStyle (renderer projection view) ----------------------
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Returns_Cascaded_Value()
     {
         var (_, _, body) = NewDocument();
@@ -991,7 +991,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("red", engine.GetCascadedStyle(div)["color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Does_Not_Backfill_Initials()
     {
         var (_, _, body) = NewDocument();
@@ -1009,7 +1009,7 @@ public sealed class CssStyleEngineTests
         Assert.False(cascaded.ContainsKey("margin-top"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Expands_Shorthands()
     {
         var (_, _, body) = NewDocument();
@@ -1026,7 +1026,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("4px", cascaded["margin-left"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Excludes_Inline_Style()
     {
         var (_, _, body) = NewDocument();
@@ -1044,7 +1044,7 @@ public sealed class CssStyleEngineTests
         Assert.False(cascaded.ContainsKey("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Can_Include_Inline_Style_In_The_Author_Cascade()
     {
         var (_, _, body) = NewDocument();
@@ -1061,7 +1061,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("9px", cascaded["margin-right"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Inline_Important_Beats_Author_Important()
     {
         var (_, _, body) = NewDocument();
@@ -1112,7 +1112,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", cascaded["color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Expands_MultiValue_Pseudo_Element_Borders()
     {
         var (_, _, body) = NewDocument();
@@ -1129,7 +1129,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("solid", cascaded["border-left-style"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Folds_Inherit_To_Parent_Computed()
     {
         var (_, _, body) = NewDocument();
@@ -1148,7 +1148,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", cascaded["color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetCascadedStyle_Border_Shorthand_Resets_Omitted_Color_To_Initial()
     {
         var (_, _, body) = NewDocument();
@@ -1167,7 +1167,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("rgb(0, 0, 0)", cascaded["border-top-color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void CssEngineDiagnostics_Reports_Dropped_Declarations_Only()
     {
         var (_, _, body) = NewDocument();
@@ -1228,7 +1228,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal(expected, CssStyleEngine.IsValidSupportsCondition(condition));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Supports_Rule_With_Invalid_Condition_Does_Not_Apply()
     {
         var (_, _, body) = NewDocument();
@@ -1243,7 +1243,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Supports_Rule_With_Valid_Condition_Applies()
     {
         var (_, _, body) = NewDocument();
@@ -1342,7 +1342,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal(value, engine.GetCascadedStyle(div)["text-align-last"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void TextAlignLast_Drops_Invalid_Value()
     {
         var (_, _, body) = NewDocument();
@@ -1353,7 +1353,7 @@ public sealed class CssStyleEngineTests
         Assert.False(engine.GetCascadedStyle(div).ContainsKey("text-align-last"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void TextAlignLast_Is_Inherited()
     {
         var (_, _, body) = NewDocument();
@@ -1368,7 +1368,7 @@ public sealed class CssStyleEngineTests
 
     // ---- GetSparseComputedStyle: computed pipeline without initial-value backfill ----
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSparseComputedStyle_Omits_Undeclared_NonInherited_Property()
     {
         var (_, _, body) = NewDocument();
@@ -1398,7 +1398,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("inline", full.GetPropertyValue("display"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSparseComputedStyle_Backfills_Inherited_Property_From_Parent()
     {
         var (_, _, body) = NewDocument();
@@ -1420,7 +1420,7 @@ public sealed class CssStyleEngineTests
         Assert.False(engine.GetSparseComputedStyle(child).ContainsKey("display"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSparseComputedStyle_Expands_Shorthands_Without_Initial_Longhands()
     {
         var (_, _, body) = NewDocument();
@@ -1441,7 +1441,7 @@ public sealed class CssStyleEngineTests
         Assert.Equal("0px", engine.GetComputedStyle(div).GetPropertyValue("padding-top"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSparseComputedStyle_Is_A_Subset_Of_GetComputedStyle_Agreeing_On_Shared_Keys()
     {
         var (_, _, body) = NewDocument();
@@ -1463,14 +1463,14 @@ public sealed class CssStyleEngineTests
         Assert.Equal("inline", full.GetPropertyValue("display"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSparseComputedStyle_Returns_Empty_For_Null_Element()
     {
         var engine = EngineWith("div { color: red; }");
         Assert.Empty(engine.GetSparseComputedStyle(null!));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSparseComputedStyle_SparseInheritance_Omits_Nowhere_Declared_Inherited_Property()
     {
         var (_, _, body) = NewDocument();
@@ -1500,7 +1500,7 @@ public sealed class CssStyleEngineTests
         Assert.False(sparse.ContainsKey("display"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void GetSparseComputedStyle_SparseInheritance_Propagates_Declared_Value_Down_Ancestor_Chain()
     {
         var (_, _, body) = NewDocument();

@@ -12,7 +12,7 @@ namespace Broiler.CSS.Tests;
 /// </summary>
 public sealed class PositionTryRuleTests
 {
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parse_SingleRule_ExtractsDeclarations()
     {
         var rules = PositionTryRule.Parse("@position-try --a { top: 10px; left: 20px }");
@@ -21,7 +21,7 @@ public sealed class PositionTryRuleTests
         Assert.Equal("20px", rules["--a"]["left"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parse_MultipleRules()
     {
         var rules = PositionTryRule.Parse(
@@ -31,7 +31,7 @@ public sealed class PositionTryRuleTests
         Assert.Equal("2px", rules["--b"]["bottom"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parse_StripsCommentsBeforeDeclarations()
     {
         // A comment inside the body contains ':' and ';' that would corrupt parsing.
@@ -41,7 +41,7 @@ public sealed class PositionTryRuleTests
         Assert.Equal("5px", rules["--a"]["right"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parse_DeclarationNamesAreCaseInsensitive()
     {
         var rules = PositionTryRule.Parse("@position-try --a { TOP: 3px }");
@@ -49,7 +49,7 @@ public sealed class PositionTryRuleTests
         Assert.Equal("3px", rules["--a"]["ToP"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parse_LastDuplicateRuleWins()
     {
         var rules = PositionTryRule.Parse(
@@ -58,7 +58,7 @@ public sealed class PositionTryRuleTests
         Assert.Equal("9px", rules["--a"]["top"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parse_RuleNamesAreCaseSensitive()
     {
         var rules = PositionTryRule.Parse(
@@ -75,7 +75,7 @@ public sealed class PositionTryRuleTests
         Assert.Empty(PositionTryRule.Parse(css));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Parse_SkipsBlankAndColonlessDeclarations()
     {
         var rules = PositionTryRule.Parse("@position-try --a { top: 1px; ; garbage; left: 2px }");

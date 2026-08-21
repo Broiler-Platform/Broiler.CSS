@@ -24,7 +24,7 @@ public sealed class ShorthandLonghandOriginTests
         return target;
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Author_Background_Shorthand_Beats_UA_BackgroundColor_Longhand()
     {
         var target = NewTarget();
@@ -39,7 +39,7 @@ public sealed class ShorthandLonghandOriginTests
         Assert.Equal("lime", engine.GetCascadedStyle(target)["background-color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Same_Origin_Later_BackgroundColor_Longhand_Still_Wins_Over_Earlier_Background_Shorthand()
     {
         // Seeding must not invert same-origin source order: a later background-color
@@ -53,7 +53,7 @@ public sealed class ShorthandLonghandOriginTests
         Assert.Equal("red", engine.GetCascadedStyle(target)["background-color"]);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void UA_Background_Shorthand_Still_Beaten_By_Author_Background_Shorthand()
     {
         // Control: shorthand-vs-shorthand already resolved correctly (competes at the

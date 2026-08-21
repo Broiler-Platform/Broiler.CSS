@@ -4,7 +4,7 @@ namespace Broiler.CSS.Dom.Tests;
 
 public sealed class CssSelectorMatcherTests
 {
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Matches_Compound_Combinator_And_Attribute_Selectors()
     {
         var tree = CreateTree();
@@ -19,7 +19,7 @@ public sealed class CssSelectorMatcherTests
         Assert.False(matcher.Matches(tree.Second, "p:first-child"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Matches_Level_Four_Functional_Pseudo_Classes()
     {
         var tree = CreateTree();
@@ -33,7 +33,7 @@ public sealed class CssSelectorMatcherTests
         Assert.True(matcher.Matches(tree.Second, "p:nth-last-child(1)"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Matches_Not_With_Nested_Attribute_Selector()
     {
         // Regression: a nested attribute selector inside :not() (or :is()/:where()) must be
@@ -73,7 +73,7 @@ public sealed class CssSelectorMatcherTests
         Assert.True(matcher.Matches(closed, "dialog:not([open])"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Unknown_PseudoClass_Invalidates_Selector_But_Recognized_Ones_Stay_Lenient()
     {
         var tree = CreateTree();
@@ -96,7 +96,7 @@ public sealed class CssSelectorMatcherTests
         Assert.True(matcher.Matches(tree.First, "p:-webkit-anything"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Matches_Root_Scope_Empty_Language_And_Form_State()
     {
         var document = new DomDocument();
@@ -121,7 +121,7 @@ public sealed class CssSelectorMatcherTests
         Assert.True(matcher.Matches(checkbox, "input:enabled:checked"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Has_Matches_Nth_Child_And_Nested_Functions()
     {
         var document = new DomDocument();
@@ -141,7 +141,7 @@ public sealed class CssSelectorMatcherTests
         Assert.True(matcher.Matches(target, "#target:has(:is(.item + .item + .item))"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Nth_Child_Of_Selector_Requires_The_Element_To_Match_The_Filter()
     {
         // Regression for the WPT test css/selectors/nth-last-child-of-tagname.html.
@@ -201,7 +201,7 @@ public sealed class CssSelectorMatcherTests
         Assert.False(matcher.Matches(intro, ":nth-child(1 of webkit, fast)"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Specificity_Is_Owned_By_The_Css_Kernel()
     {
         Assert.Equal(

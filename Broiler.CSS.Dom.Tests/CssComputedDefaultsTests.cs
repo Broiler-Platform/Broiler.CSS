@@ -15,7 +15,7 @@ public sealed class CssComputedDefaultsTests
         Assert.Equal(expected, value);
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void InitialValues_Lookup_Is_Case_Insensitive()
     {
         Assert.True(CssComputedDefaults.InitialValues.TryGetValue("DISPLAY", out var value));
@@ -54,7 +54,7 @@ public sealed class CssComputedDefaultsTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void ResolveLengthAttrFunctions_Substitutes_From_Element_Attributes()
     {
         var doc = new Broiler.Dom.DomDocument();
@@ -74,7 +74,7 @@ public sealed class CssComputedDefaultsTests
         Assert.Equal("40px", computed["height"]); // falls back when the attribute is absent
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Shared_Tables_Back_The_Engine_Computed_Style()
     {
         // The engine's getComputedStyle backfills unset properties from the same

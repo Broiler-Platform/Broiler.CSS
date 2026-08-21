@@ -22,7 +22,7 @@ public sealed class CssSelectorMatcherDirTests
         return element;
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Dir_DefaultsToLtr_AndIsNotMatchedByRtl()
     {
         var document = new DomDocument();
@@ -35,7 +35,7 @@ public sealed class CssSelectorMatcherDirTests
         Assert.False(matcher.Matches(div, "div:dir(rtl)"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Dir_ReadsTheNearestAncestorsDirAttribute()
     {
         var document = new DomDocument();
@@ -53,7 +53,7 @@ public sealed class CssSelectorMatcherDirTests
         Assert.True(matcher.Matches(deeper, ":dir(ltr)"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Dir_IgnoresAnInvalidAttributeValue()
     {
         // `dir="sideways"` is not a valid value, so the element inherits rather than adopting it.
@@ -67,7 +67,7 @@ public sealed class CssSelectorMatcherDirTests
         Assert.True(matcher.Matches(bogus, ":dir(rtl)"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Dir_Auto_ResolvesFromTheFirstStrongCharacter()
     {
         var document = new DomDocument();
@@ -90,7 +90,7 @@ public sealed class CssSelectorMatcherDirTests
         Assert.True(matcher.Matches(neutral, ":dir(ltr)"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Dir_Auto_SkipsADescendantWithItsOwnDir()
     {
         // HTML's auto-directionality ignores text inside a descendant that declares its own
@@ -108,7 +108,7 @@ public sealed class CssSelectorMatcherDirTests
         Assert.True(matcher.Matches(paragraph, ":dir(ltr)"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Dir_RejectsAnArgumentThatIsNeitherLtrNorRtl()
     {
         var document = new DomDocument();
@@ -122,7 +122,7 @@ public sealed class CssSelectorMatcherDirTests
         Assert.False(matcher.Matches(div, ":dir()"));
     }
 
-    [Fact]
+    [Fact(Timeout = 600000)]
     public void Bdi_DefaultsToAutoDirectionality()
     {
         var document = new DomDocument();
