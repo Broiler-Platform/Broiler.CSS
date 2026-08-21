@@ -942,27 +942,10 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     /// with a single implementation. A property the expander does not model produces no
     /// extra keys, so nothing is seeded (a no-op).
     /// </summary>
-    /// <summary>
-    /// The <c>border</c> / <c>border-&lt;side&gt;</c> shorthands whose omitted
-    /// components (a <c>border: 1px solid</c> that leaves out the colour) are reset to
-    /// their initial value by the separate post-cascade <see cref="ApplyBorderShorthandResets"/>
-    /// pass, which is origin-blind and requires those omitted longhands to be
-    /// <em>absent</em> from the map. Seeding a longhand from such a shorthand would leave
-    /// a value the reset can no longer override, so these are excluded from cascade-time
-    /// longhand seeding; their shorthand-vs-longhand precedence is carried by the
-    /// shorthand key itself plus that reset pass.
-    /// </summary>
-    private static readonly HashSet<string> BorderResetShorthands =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "border", "border-top", "border-right", "border-bottom", "border-left",
-            "border-block", "border-inline",
-        };
-
     private static void AddShorthandLonghandSlots(
         Dictionary<string, CascadeSlot> winners, string property, CascadeSlot shorthand)
     {
-        if (shorthand.Value is null || BorderResetShorthands.Contains(property))
+        if (shorthand.Value is null)
             return;
 
         // Expand the shorthand in isolation: ExpandCssShorthands is additive and only

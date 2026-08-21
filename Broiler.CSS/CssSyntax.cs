@@ -6,6 +6,27 @@ namespace Broiler.CSS;
 
 public static class CssSyntax
 {
+    /// <summary>
+    /// CSS Syntax §4.3.8 "check if two code points are a valid escape": a <c>\</c> that is
+    /// not followed by a newline starts an escape, and the code point after it is part of
+    /// the surrounding token rather than a delimiter of its own.
+    /// </summary>
+    /// <remarks>
+    /// Callers scanning raw CSS text for structural characters must consult this before
+    /// acting on <c>{</c>, <c>}</c>, <c>;</c>, <c>:</c> and friends. Acid2's parser section
+    /// contains <c>error: \};</c>, whose escaped brace closed the rule early and desynced
+    /// every rule after it — the whole tail of the stylesheet was silently dropped.
+    /// Escapes inside a string are handled by the callers' own quote state.
+    /// </remarks>
+    public static bool IsValidEscape(string text, int index)
+    {
+        if (index < 0 || index >= text.Length || text[index] != '\\')
+            return false;
+        if (index + 1 >= text.Length)
+            return false;
+        return text[index + 1] is not ('\n' or '\r' or '\f');
+    }
+
     public static IEnumerable<string> SplitTopLevel(string text, char separator)
     {
         var start = 0;
@@ -29,6 +50,11 @@ public static class CssSyntax
             if (character is '"' or '\'')
             {
                 quote = character;
+                continue;
+            }
+            if (IsValidEscape(text, index))
+            {
+                index++;
                 continue;
             }
             if (character == '/' && index + 1 < text.Length && text[index + 1] == '*')
@@ -77,6 +103,11 @@ public static class CssSyntax
             if (character is '"' or '\'')
             {
                 quote = character;
+                continue;
+            }
+            if (IsValidEscape(text, index))
+            {
+                index++;
                 continue;
             }
             if (character == '/' && index + 1 < text.Length && text[index + 1] == '*')

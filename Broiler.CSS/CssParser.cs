@@ -45,7 +45,7 @@ public sealed class CssParser
             }
 
             var (Index, Character) = FindTopLevelDelimiter(text, position, '{', ';');
-            if (Index < 0 || Character != '{')
+            if (Index < 0)
             {
                 AddDiagnostic(
                     "CSS1001",
@@ -54,6 +54,39 @@ public sealed class CssParser
                     sourceOffset + ruleStart,
                     text.Length - ruleStart);
                 break;
+            }
+
+            if (Character == ';')
+            {
+                // CSS Syntax §5.4.2 "consume a qualified rule": in a rule list a `;` is not
+                // a prelude terminator — the prelude runs up to the block's `{`. So a stray
+                // `;` (Acid2 writes one after `.parser { m\argin: 2em; }`) makes the *next*
+                // rule's prelude an invalid selector list: that one rule, block included, is
+                // dropped and parsing resumes after it. Abandoning the rest of the sheet
+                // here instead silently dropped every later rule — in Acid2 that was
+                // everything from `ul { display: table }` on, i.e. the last line of the face.
+                var blockOpen = FindTopLevelDelimiter(text, Index + 1, '{');
+                if (blockOpen.Index < 0)
+                {
+                    AddDiagnostic(
+                        "CSS1001",
+                        "Expected a rule block.",
+                        CssDiagnosticSeverity.Error,
+                        sourceOffset + ruleStart,
+                        text.Length - ruleStart);
+                    break;
+                }
+
+                var strayClose = FindClosingBrace(text, blockOpen.Index);
+                var strayEnd = strayClose < 0 ? text.Length - 1 : strayClose;
+                AddDiagnostic(
+                    "CSS1001",
+                    "Expected a rule block.",
+                    CssDiagnosticSeverity.Error,
+                    sourceOffset + ruleStart,
+                    strayEnd - ruleStart + 1);
+                position = strayEnd + 1;
+                continue;
             }
 
             var selectorText = CssSyntax.RemoveComments(text[position..Index]).Trim();
@@ -208,7 +241,10 @@ public sealed class CssParser
         var name = trimmed[..colon].Trim();
         var valueText = trimmed[(colon + 1)..].Trim();
         var important = TryRemoveImportant(ref valueText);
-        if (!IsValidPropertyName(name) || valueText.Length == 0)
+        // CSS2.1 §4.1.9: `!` may only introduce `important` in a declaration. Anything else
+        // (`border: 5em solid red ! error`, one of Acid2's parser tests) makes the whole
+        // declaration malformed, so it is dropped and the previously cascaded value stands.
+        if (!IsValidPropertyName(name) || valueText.Length == 0 || HasStrayBang(valueText))
         {
             AddDiagnostic(
                 "CSS2002",
@@ -426,6 +462,15 @@ public sealed class CssParser
                 quote = character;
                 continue;
             }
+            // CSS Syntax §4.3.7: outside a string, `\` followed by anything but a
+            // newline is a valid escape and the escaped code point is part of the
+            // token, never a delimiter.  Without this a declaration value such as
+            // `error: \}` would end the rule at the escaped brace.
+            if (CssSyntax.IsValidEscape(text, index))
+            {
+                index++;
+                continue;
+            }
             if (character == '/' && index + 1 < text.Length && text[index + 1] == '*')
             {
                 var close = text.IndexOf("*/", index + 2, StringComparison.Ordinal);
@@ -471,6 +516,13 @@ public sealed class CssParser
             if (character is '"' or '\'')
             {
                 quote = character;
+                continue;
+            }
+            // CSS Syntax §4.3.7: an escaped `\}` (or `\{`, `\)`, …) is an ident
+            // code point, not a block delimiter — see FindTopLevelDelimiter above.
+            if (CssSyntax.IsValidEscape(text, index))
+            {
+                index++;
                 continue;
             }
             if (character == '/' && index + 1 < text.Length && text[index + 1] == '*')
@@ -532,6 +584,18 @@ public sealed class CssParser
         value = value[..bang].TrimEnd();
         return true;
     }
+
+    /// <summary>
+    /// Whether the value still carries a top-level <c>!</c> after <c>!important</c> has been
+    /// taken off — the mark of a malformed declaration (CSS2.1 §4.1.9).
+    /// </summary>
+    /// <remarks>
+    /// Only bangs outside strings, <c>url()</c> and other function arguments count: a
+    /// <c>content: "!"</c> or a <c>url(a!b.png)</c> is perfectly valid.
+    /// </remarks>
+    private static bool HasStrayBang(string value) =>
+        value.Contains('!', StringComparison.Ordinal)
+        && FindTopLevelDelimiter(value, 0, '!').Index >= 0;
 
     private static bool IsValidPropertyName(string name)
     {

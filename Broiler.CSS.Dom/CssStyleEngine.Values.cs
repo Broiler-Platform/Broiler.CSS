@@ -411,6 +411,18 @@ public sealed partial class CssStyleEngine
         if (IsLengthPercentageProperty(property) && ComparisonMathFunctionHasBareNumberArgument(v))
             return false;
 
+        // CSS2.1 §4.3.2: outside quirks mode the unit identifier may only be omitted for a
+        // zero length, so `width: 200` is a parse error and the declaration is dropped.
+        // Acid2 checks it — `.parser { width: 200 }` must yield to the earlier `width: 2em`,
+        // and honouring the bare number stretched the bottom line of the face nearly three
+        // times its width. In quirks mode the unitless-length quirk keeps it valid.
+        if (IsLengthPercentageProperty(property)
+            && !CssDocumentMode.QuirksMode
+            && HasUnitlessNonZeroLength(v))
+        {
+            return false;
+        }
+
         switch (property.ToLowerInvariant())
         {
             case "white-space":
@@ -546,6 +558,9 @@ public sealed partial class CssStyleEngine
                 return v is "normal" or "bold" or "bolder" or "lighter"
                     || (int.TryParse(v, out var w) && w is >= 1 and <= 1000);
 
+            case "background":
+                return IsAcceptableBackgroundShorthand(v);
+
             case "color":
             case "background-color":
             case "border-color":
@@ -565,6 +580,51 @@ public sealed partial class CssStyleEngine
             default:
                 return true;
         }
+    }
+
+    /// <summary>
+    /// CSS Backgrounds 3 §3.10: a <c>background</c> layer takes at most one <c>&lt;color&gt;</c>,
+    /// and only the final layer may take one at all — so a second bare colour keyword makes the
+    /// whole declaration invalid and it must be dropped.
+    /// </summary>
+    /// <remarks>
+    /// Acid2 rests on this: <c>.parser { background: red pink }</c> has to yield to the earlier
+    /// <c>background: yellow</c>, and taking the first colour instead painted a red bar across the
+    /// bottom of the face. Only bare tokens are counted — anything with a <c>(</c> is a function
+    /// (<c>image-set()</c>, <c>element()</c>, a gradient the classifier below may not name), so a
+    /// layer such as <c>red image-set(…)</c> stays valid rather than reading as two colours.
+    /// </remarks>
+    private static bool IsAcceptableBackgroundShorthand(string value)
+    {
+        var layers = SplitOnTopLevelCommas(value);
+
+        for (int layerIndex = 0; layerIndex < layers.Count; layerIndex++)
+        {
+            int bareTokens = 0;
+
+            foreach (var token in SplitCssValues(layers[layerIndex]))
+            {
+                var lower = token.ToLowerInvariant();
+                if (lower.Contains('(', StringComparison.Ordinal)
+                    || lower is "/" or "none" or "scroll" or "fixed" or "local"
+                        or "content-box" or "padding-box" or "border-box" or "border-area"
+                        or "repeat" or "repeat-x" or "repeat-y" or "no-repeat" or "space" or "round"
+                        or "left" or "right" or "top" or "bottom" or "center"
+                        or "inherit" or "auto" or "cover" or "contain"
+                    || IsLengthOrPercentage(lower))
+                {
+                    continue;
+                }
+
+                bareTokens++;
+            }
+
+            bool isFinalLayer = layerIndex == layers.Count - 1;
+            if (bareTokens > (isFinalLayer ? 1 : 0))
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1007,13 +1067,24 @@ public sealed partial class CssStyleEngine
         if (!computed.ContainsKey(leftProp)) computed[leftProp] = left;
     }
 
-    private static void ExpandBorderShorthand(Dictionary<string, string> computed, string value)
+    /// <summary>
+    /// Splits a <c>border</c> / <c>border-&lt;side&gt;</c> shorthand value into its three
+    /// components, resolving any the declaration omits to the value the shorthand resets it to.
+    /// </summary>
+    /// <remarks>
+    /// CSS Backgrounds 3 §4.4: a border shorthand sets <em>all</em> of its longhands, so an
+    /// omitted component takes its initial value rather than keeping whatever an earlier
+    /// declaration left there. That is what makes <c>border: solid 1em black; border-top: 0</c>
+    /// erase the top border entirely — Acid2's nose is written that way, and keeping the 1em
+    /// black top border drew a bar straight across the face. The used width of a
+    /// <c>none</c>/<c>hidden</c> border is 0 whatever width is specified, so an omitted width
+    /// projects as <c>0px</c> there and as the <c>medium</c> initial elsewhere.
+    /// </remarks>
+    private static (string Width, string Style, string Color) ResolveBorderComponents(string value)
     {
-        var parts = SplitCssValues(value);
-
         string? width = null, style = null, color = null;
 
-        foreach (var part in parts)
+        foreach (var part in SplitCssValues(value))
         {
             var lower = part.ToLowerInvariant();
             if (lower is "none" or "hidden" or "dotted" or "dashed" or "solid"
@@ -1031,16 +1102,26 @@ public sealed partial class CssStyleEngine
             }
         }
 
-        if (width != null && !computed.ContainsKey("border-width")) computed["border-width"] = width;
-        if (style != null && !computed.ContainsKey("border-style")) computed["border-style"] = style;
-        if (color != null && !computed.ContainsKey("border-color")) computed["border-color"] = color;
+        style ??= "none";
+        width ??= style.Trim().ToLowerInvariant() is "none" or "hidden" ? "0px" : "medium";
+        // The engine projects border-*-color's initial `currentcolor` as the computed initial
+        // colour, so take it from the same table rather than emitting the keyword — a consumer
+        // reading the cascaded map gets one spelling either way it was omitted.
+        color ??= CssInitialValues.GetValueOrDefault("border-top-color") ?? "currentcolor";
+        return (width, style, color);
+    }
 
-        if (width != null)
-            ExpandBoxShorthand(computed, width, "border-top-width", "border-right-width", "border-bottom-width", "border-left-width");
-        if (style != null)
-            ExpandBoxShorthand(computed, style, "border-top-style", "border-right-style", "border-bottom-style", "border-left-style");
-        if (color != null)
-            ExpandBoxShorthand(computed, color, "border-top-color", "border-right-color", "border-bottom-color", "border-left-color");
+    private static void ExpandBorderShorthand(Dictionary<string, string> computed, string value)
+    {
+        var (width, style, color) = ResolveBorderComponents(value);
+
+        if (!computed.ContainsKey("border-width")) computed["border-width"] = width;
+        if (!computed.ContainsKey("border-style")) computed["border-style"] = style;
+        if (!computed.ContainsKey("border-color")) computed["border-color"] = color;
+
+        ExpandBoxShorthand(computed, width, "border-top-width", "border-right-width", "border-bottom-width", "border-left-width");
+        ExpandBoxShorthand(computed, style, "border-top-style", "border-right-style", "border-bottom-style", "border-left-style");
+        ExpandBoxShorthand(computed, color, "border-top-color", "border-right-color", "border-bottom-color", "border-left-color");
     }
 
     /// <summary>
@@ -1072,25 +1153,13 @@ public sealed partial class CssStyleEngine
 
     private static void ExpandBorderSideShorthand(Dictionary<string, string> computed, string value, string side)
     {
-        var parts = SplitCssValues(value);
-        string? width = null, style = null, color = null;
-        foreach (var part in parts)
-        {
-            var lower = part.ToLowerInvariant();
-            if (lower is "none" or "hidden" or "dotted" or "dashed" or "solid"
-                or "double" or "groove" or "ridge" or "inset" or "outset")
-                style ??= part;
-            else if (lower is "thin" or "medium" or "thick" || IsLengthOrPercentage(lower))
-                width ??= part;
-            else
-                color ??= part;
-        }
+        var (width, style, color) = ResolveBorderComponents(value);
 
-        if (width != null && !computed.ContainsKey($"border-{side}-width"))
+        if (!computed.ContainsKey($"border-{side}-width"))
             computed[$"border-{side}-width"] = width;
-        if (style != null && !computed.ContainsKey($"border-{side}-style"))
+        if (!computed.ContainsKey($"border-{side}-style"))
             computed[$"border-{side}-style"] = style;
-        if (color != null && !computed.ContainsKey($"border-{side}-color"))
+        if (!computed.ContainsKey($"border-{side}-color"))
             computed[$"border-{side}-color"] = color;
     }
 
@@ -2151,6 +2220,32 @@ public sealed partial class CssStyleEngine
 
     private static bool IsLengthPercentageProperty(string property) =>
         LengthPercentageProperties.Contains(property);
+
+    /// <summary>
+    /// Whether any space-separated component of a <c>&lt;length-percentage&gt;</c> value is a bare
+    /// non-zero number — <c>width: 200</c>, <c>margin: 0 10</c> — which is only a length in quirks
+    /// mode (CSS2.1 §4.3.2 / https://quirks.spec.whatwg.org/#the-unitless-length-quirk).
+    /// </summary>
+    /// <remarks>
+    /// Only plain numeric tokens count. Keywords (<c>auto</c>), percentages, dimensions and
+    /// anything containing a <c>(</c> — <c>calc(200px / 2)</c>, <c>min(…)</c>, <c>var(…)</c> —
+    /// are left alone, so this can only reject a token that no strict-mode grammar accepts.
+    /// </remarks>
+    private static bool HasUnitlessNonZeroLength(string value)
+    {
+        if (value.Contains('(', StringComparison.Ordinal))
+            return false;
+
+        foreach (var token in value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+                continue;
+            if (number != 0)
+                return true;
+        }
+
+        return false;
+    }
 
     private static readonly string[] ComparisonMathFunctionNames = ["min", "max", "clamp"];
 
