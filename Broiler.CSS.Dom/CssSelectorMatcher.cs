@@ -191,7 +191,13 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 "invalid" => IsConstraintValidationCandidate(element) && HasConstraintViolation(element),
                 "required" => SupportsRequiredState(element) && IsRequiredControl(element),
                 "optional" => SupportsRequiredState(element) && !IsRequiredControl(element),
-                "link" => IsNamed(element, "a", "area") && element.HasAttribute("href"),
+                // SVG 1.1 §17.1 / SVG 2 §14.1: an SVG <a> is a link through `xlink:href` as well
+                // as `href`, and the deprecated attribute still carries the link on its own — WPT
+                // svg/linking/reftests/href-a-element-attr-change removes `href` at load and
+                // asserts the element keeps its link status, so `a:link rect { fill: lime }` must
+                // still match. Testing `href` alone repainted that rect red.
+                "link" => IsNamed(element, "a", "area") &&
+                    (element.HasAttribute("href") || element.HasAttribute("xlink:href")),
                 // Selectors 4 §7.1 pairs :link and :visited, but they are not synonyms —
                 // :visited matches a link this user has been to. A static render has no
                 // history to consult, and :visited is the one selector a page must never be
