@@ -423,6 +423,15 @@ public sealed partial class CssStyleEngine
             return false;
         }
 
+        // CSS Images 4 §5.4: a <resolution> is non-negative, so `image-set(url(a) -1x, …)` is a
+        // parse error — CSS Syntax 3 §9 then drops the whole declaration and the one cascaded under
+        // it applies. It has to be refused *here*, in the cascade: only the winning value reaches
+        // the renderer, so declining it there leaves the property at its initial value rather than
+        // at the previous declaration. `image-set-negative-resolution-rendering-2` puts a green
+        // `url()` behind it and expects green.
+        if (ImageSetHasNegativeResolution(v))
+            return false;
+
         switch (property.ToLowerInvariant())
         {
             case "white-space":
@@ -2231,6 +2240,93 @@ public sealed partial class CssStyleEngine
     /// anything containing a <c>(</c> — <c>calc(200px / 2)</c>, <c>min(…)</c>, <c>var(…)</c> —
     /// are left alone, so this can only reject a token that no strict-mode grammar accepts.
     /// </remarks>
+    /// <summary>
+    /// Whether the value contains an <c>image-set()</c> whose options include a negative
+    /// <c>&lt;resolution&gt;</c>, which CSS Images 4 §5.4 makes a parse error.
+    /// </summary>
+    /// <remarks>
+    /// Resolutions are only looked for <em>outside</em> a <c>url()</c> and outside quotes, so a file
+    /// genuinely named <c>sprite-1x.png</c> does not invalidate the declaration that loads it. A
+    /// zero resolution is deliberately not rejected: it parses and simply selects nothing, which is
+    /// a different outcome from the declaration being dropped.
+    /// </remarks>
+    private static bool ImageSetHasNegativeResolution(string value)
+    {
+        int at = value.IndexOf("image-set(", StringComparison.Ordinal);
+        if (at < 0)
+            return false;
+
+        int open = value.IndexOf('(', at);
+        int depth = 0, end = -1;
+        for (int i = open; i < value.Length; i++)
+        {
+            if (value[i] == '(') depth++;
+            else if (value[i] == ')' && --depth == 0) { end = i; break; }
+        }
+        if (end < 0)
+            return false;
+
+        // Walk the options, ignoring anything inside a nested function or a string.
+        int nested = 0;
+        char quote = '\0';
+        var token = new StringBuilder();
+        bool negative = false;
+
+        for (int i = open + 1; i < end; i++)
+        {
+            char c = value[i];
+
+            if (quote != '\0')
+            {
+                if (c == quote) quote = '\0';
+                continue;
+            }
+
+            if (c is '"' or '\'') { quote = c; token.Clear(); continue; }
+            if (c == '(') { nested++; token.Clear(); continue; }
+            if (c == ')') { if (nested > 0) nested--; token.Clear(); continue; }
+            if (nested > 0) continue;
+
+            if (c is ' ' or '\t' or ',')
+            {
+                if (token.Length > 0 && IsNegativeResolution(token.ToString()))
+                    negative = true;
+                token.Clear();
+            }
+            else
+            {
+                token.Append(c);
+            }
+        }
+
+        if (token.Length > 0 && IsNegativeResolution(token.ToString()))
+            negative = true;
+
+        return negative;
+    }
+
+    /// <summary>A <c>&lt;resolution&gt;</c> token whose value is below zero.</summary>
+    private static bool IsNegativeResolution(string token)
+    {
+        if (token.Length < 2 || token[0] != '-')
+            return false;
+
+        foreach (var unit in ResolutionUnits)
+        {
+            if (!token.EndsWith(unit, StringComparison.Ordinal))
+                continue;
+
+            var number = token.AsSpan(0, token.Length - unit.Length);
+            if (double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+                return parsed < 0;
+        }
+
+        return false;
+    }
+
+    /// <summary>Longest first, so <c>dppx</c> is not read as <c>x</c>.</summary>
+    private static readonly string[] ResolutionUnits = ["dppx", "dpcm", "dpi", "x"];
+
     private static bool HasUnitlessNonZeroLength(string value)
     {
         if (value.Contains('(', StringComparison.Ordinal))
