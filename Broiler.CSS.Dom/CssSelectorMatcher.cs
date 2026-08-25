@@ -175,6 +175,15 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 "scope" => scope is not null && ReferenceEquals(element, scope),
                 "not" => argument is null || !MatchesAny(element, argument, scope),
                 "is" or "where" => argument is not null && MatchesAny(element, argument, scope),
+                // The historical spellings of :is(). Only the -webkit- one is still accepted by a
+                // browser, and it behaves exactly like :is(); :matches(), :any() and :-moz-any()
+                // were removed, so they are invalid selectors whose rule is dropped and which match
+                // nothing. All four used to fall through to the lenient default below and match
+                // EVERY element — `:-webkit-any(h1) { color: red }` painted the whole page, and the
+                // cascade goes through this same matcher, so it was a rendering bug and not only a
+                // querySelector one. Measured against a browser.
+                "-webkit-any" => argument is not null && MatchesAny(element, argument, scope),
+                "matches" or "any" or "-moz-any" => false,
                 "has" => argument is not null && MatchesHas(element, argument),
                 "lang" => argument is not null && MatchesLanguage(element, argument),
                 "dir" => argument is not null && MatchesDirectionality(element, argument),
@@ -1110,7 +1119,9 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         "nth-child", "nth-last-child", "nth-of-type", "nth-last-of-type",
         "nth-col", "nth-last-col",
         // Logical combinators
-        "is", "where", "not", "has", "matches", "any",
+        // "matches"/"any" are deliberately absent: they have an explicit arm above, because
+        // recognizing them here made them match every element.
+        "is", "where", "not", "has",
         // Linguistic / directionality
         "lang", "dir",
         // Location / link
