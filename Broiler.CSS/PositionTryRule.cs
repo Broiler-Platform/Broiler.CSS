@@ -38,9 +38,22 @@ public static partial class PositionTryRule
     /// case-sensitive (ordinal); declaration property names are case-insensitive.
     /// Later duplicates win.
     /// </summary>
-    public static Dictionary<string, Dictionary<string, string>> Parse(string cssText)
+    /// <remarks>
+    /// Read-only to its caller at both levels. Handing back a <see cref="Dictionary{TKey,
+    /// TValue}"/> hands back the right to edit a parse result, which is the rule
+    /// <c>CssDomArchitectureTests.Public_Surface_Does_Not_Expose_Mutable_Collections</c> states for
+    /// the neighbouring assembly and which holds here for the same reason. Unlike
+    /// <see cref="RendererStyleQueries.GetFontFeatureValues"/> this result is not cached, so an
+    /// edit could never have reached another caller — the leak was narrower, not absent.
+    /// <para>
+    /// The maps are still built as dictionaries and handed over through the interface, so nothing
+    /// is copied and both comparers survive: ordinal for rule names, case-insensitive for
+    /// declaration names.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Parse(string cssText)
     {
-        var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        var result = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         if (string.IsNullOrEmpty(cssText))
             return result;
 
