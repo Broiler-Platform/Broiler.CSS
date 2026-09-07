@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A later push on the same branch cancels the earlier run: what is checked does
+# not change, only how many times an abandoned commit is checked.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Named per matrix entry rather than left to the runner label, so the branch
+    # protection context is a sentence and not `ubuntu-latest`. Renaming one of
+    # these renames a required check; update the protection list with it.
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Tests (Linux)
+            os: ubuntu-latest
+          - name: Tests (Windows)
+            os: windows-latest
+
+    steps:
+      # Recursive: Broiler.DOM carries the canonical Dom kernel that this
+      # repository resolves through $(BroilerDomPath) — see the ProjectReference
+      # in Broiler.CSS.Dom.csproj — and nothing restores without it.
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build Broiler.CSS.slnx -c Release --nologo
+
+      # Both suites are xunit, so `dotnet test` discovers them; there is no
+      # self-hosted runner here as there is in Broiler.Graphics.
+      - name: Test
+        run: dotnet test Broiler.CSS.slnx -c Release --nologo --no-build
