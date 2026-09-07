@@ -13,7 +13,7 @@ public static class RendererStyleQueries
 
     private sealed record Metadata(
         IReadOnlyList<FontFace> FontFaces,
-        IReadOnlyDictionary<string, Dictionary<string, Dictionary<string, int[]>>> FontFeatureValues,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyDictionary<string, int[]>>> FontFeatureValues,
         bool HasBeforeRules,
         bool HasAfterRules);
 
@@ -22,7 +22,18 @@ public static class RendererStyleQueries
     public static IReadOnlyList<FontFace> GetFontFaces(CssStyleSheet styleSheet) =>
         Cache.GetValue(styleSheet, ParseMetadata).FontFaces;
 
-    public static IReadOnlyDictionary<string, Dictionary<string, Dictionary<string, int[]>>> GetFontFeatureValues(
+    /// <summary>
+    /// The <c>@font-feature-values</c> blocks in this stylesheet: family → feature type → value
+    /// name → the numbers that name stands for. Read-only at every level.
+    /// </summary>
+    /// <remarks>
+    /// The outer map was already an interface, but its values were <see cref="Dictionary{TKey,
+    /// TValue}"/> two levels down, so a caller could edit a parsed block. That was worse than an
+    /// ordinary mutable-collection leak because <b>this result is cached per stylesheet</b>: the
+    /// map handed to one caller is the same instance handed to every later one, so a single edit
+    /// would have silently changed what every subsequent query returned.
+    /// </remarks>
+    public static IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyDictionary<string, int[]>>> GetFontFeatureValues(
         CssStyleSheet styleSheet) =>
         Cache.GetValue(styleSheet, ParseMetadata).FontFeatureValues;
 
@@ -104,7 +115,38 @@ public static class RendererStyleQueries
             }
         }
 
-        return new Metadata(faces, featureValues, hasBeforeRules, hasAfterRules);
+        return new Metadata(faces, PublishFeatureValues(featureValues), hasBeforeRules, hasAfterRules);
+    }
+
+    /// <summary>
+    /// Re-declares the parsed nesting through <see cref="IReadOnlyDictionary{TKey, TValue}"/> at
+    /// every level, so nothing handed to a caller is typed as editable.
+    /// </summary>
+    /// <remarks>
+    /// The two outer levels are rebuilt because their VALUE type has to change, and each keeps the
+    /// comparer it was parsed with: family and feature type are matched case-insensitively, and
+    /// only the innermost value-name map is ordinal — a distinction the renderer relies on, and
+    /// the one thing a careless rebuild would quietly lose. The innermost map is passed through as
+    /// the same object, since a <c>Dictionary</c> already implements the read-only interface and
+    /// copying it would cost an allocation to buy nothing. Called once per stylesheet, on the miss
+    /// that populates the cache — not once per query.
+    /// </remarks>
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyDictionary<string, int[]>>> PublishFeatureValues(
+        Dictionary<string, Dictionary<string, Dictionary<string, int[]>>> parsed)
+    {
+        var families = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyDictionary<string, int[]>>>(
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var family in parsed)
+        {
+            var types = new Dictionary<string, IReadOnlyDictionary<string, int[]>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var type in family.Value)
+                types[type.Key] = type.Value;
+            families[family.Key] = types;
+        }
+
+        return families;
     }
 
     private static IEnumerable<CssRule> EnumerateRules(IEnumerable<CssRule> rules)
