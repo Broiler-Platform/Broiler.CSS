@@ -38,7 +38,7 @@ public sealed partial class CssStyleEngine
     // ---- CSS-wide keywords -------------------------------------------------
 
     private static void ResolveCssWideKeywordProperties(
-        Dictionary<string, string> computed,
+        IDictionary<string, string> computed,
         IReadOnlyDictionary<string, string>? parentProps)
     {
         foreach (var key in computed.Keys.ToList())
@@ -82,7 +82,7 @@ public sealed partial class CssStyleEngine
 
     // ---- var() resolution --------------------------------------------------
 
-    private static void ResolveKnownCustomProperties(Dictionary<string, string> computed)
+    private static void ResolveKnownCustomProperties(IDictionary<string, string> computed)
     {
         foreach (var key in computed.Keys.ToList())
         {
@@ -106,7 +106,7 @@ public sealed partial class CssStyleEngine
 
     private static string ResolveKnownCustomProperties(
         string value,
-        Dictionary<string, string> computed,
+        IDictionary<string, string> computed,
         int depth = 0,
         HashSet<string>? visiting = null)
     {
@@ -195,7 +195,7 @@ public sealed partial class CssStyleEngine
 
     private static string ResolveVarFunction(
         string inner,
-        Dictionary<string, string> computed,
+        IDictionary<string, string> computed,
         int depth,
         HashSet<string>? visiting = null)
     {
@@ -282,7 +282,7 @@ public sealed partial class CssStyleEngine
     // earlier cascaded declaration.
     private static string ResolveEnvFunction(
         string inner,
-        Dictionary<string, string> computed,
+        IDictionary<string, string> computed,
         int depth,
         HashSet<string>? visiting = null)
     {
@@ -756,10 +756,10 @@ public sealed partial class CssStyleEngine
     /// computed/declared style maps through it instead of a bridge-private copy that could drift
     /// (HtmlBridge DOM/CSS promotion roadmap, Phase 2).
     /// </summary>
-    public static void ExpandShorthands(Dictionary<string, string> declarations) =>
+    public static void ExpandShorthands(IDictionary<string, string> declarations) =>
         ExpandCssShorthands(declarations);
 
-    private static void ExpandCssShorthands(Dictionary<string, string> computed)
+    private static void ExpandCssShorthands(IDictionary<string, string> computed)
     {
         if (computed.TryGetValue("font", out var fontVal))
             ExpandFontShorthand(computed, fontVal);
@@ -871,7 +871,7 @@ public sealed partial class CssStyleEngine
             ExpandBackgroundShorthand(computed, bgVal);
     }
 
-    private static void ExpandFontShorthand(Dictionary<string, string> computed, string value)
+    private static void ExpandFontShorthand(IDictionary<string, string> computed, string value)
     {
         if (string.IsNullOrWhiteSpace(value))
             return;
@@ -1062,7 +1062,7 @@ public sealed partial class CssStyleEngine
         || IsLengthOrPercentage(token)
         || double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out _);
 
-    private static void ExpandBoxShorthand(Dictionary<string, string> computed, string value,
+    private static void ExpandBoxShorthand(IDictionary<string, string> computed, string value,
         string topProp, string rightProp, string bottomProp, string leftProp)
     {
         var parts = SplitCssValues(value);
@@ -1120,7 +1120,7 @@ public sealed partial class CssStyleEngine
         return (width, style, color);
     }
 
-    private static void ExpandBorderShorthand(Dictionary<string, string> computed, string value)
+    private static void ExpandBorderShorthand(IDictionary<string, string> computed, string value)
     {
         var (width, style, color) = ResolveBorderComponents(value);
 
@@ -1138,7 +1138,7 @@ public sealed partial class CssStyleEngine
     /// (<c>&lt;outline-width&gt; || &lt;outline-style&gt; || &lt;outline-color&gt;</c>)
     /// into its longhands. The <c>auto</c> style keyword (focus-ring) is accepted.
     /// </summary>
-    private static void ExpandOutlineShorthand(Dictionary<string, string> computed, string value)
+    private static void ExpandOutlineShorthand(IDictionary<string, string> computed, string value)
     {
         var parts = SplitCssValues(value);
         string? width = null, style = null, color = null;
@@ -1160,7 +1160,7 @@ public sealed partial class CssStyleEngine
         if (color != null && !computed.ContainsKey("outline-color")) computed["outline-color"] = color;
     }
 
-    private static void ExpandBorderSideShorthand(Dictionary<string, string> computed, string value, string side)
+    private static void ExpandBorderSideShorthand(IDictionary<string, string> computed, string value, string side)
     {
         var (width, style, color) = ResolveBorderComponents(value);
 
@@ -1188,7 +1188,7 @@ public sealed partial class CssStyleEngine
         "background-position", "background-size", "background-origin", "background-clip",
     ];
 
-    private static void ExpandBackgroundShorthand(Dictionary<string, string> computed, string value)
+    private static void ExpandBackgroundShorthand(IDictionary<string, string> computed, string value)
     {
         // CSS Cascade §7.3: a CSS-wide keyword as the sole shorthand value sets every longhand it
         // controls to that keyword — e.g. `background: inherit` means `background-color: inherit`,
@@ -1407,7 +1407,7 @@ public sealed partial class CssStyleEngine
 
     // ---- Relative font-weight ---------------------------------------------
 
-    private static void ResolveFontWeightKeywords(Dictionary<string, string> computed, int parentWeight)
+    private static void ResolveFontWeightKeywords(IDictionary<string, string> computed, int parentWeight)
     {
         if (!computed.TryGetValue("font-weight", out var fw) || string.IsNullOrEmpty(fw))
             return;
