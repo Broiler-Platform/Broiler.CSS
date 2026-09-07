@@ -161,7 +161,17 @@ public sealed class CssKernelTests
             static rule => rule.Selectors.Selectors.Any(static selector => selector.Text == "body"));
     }
 
-    [Fact(Timeout = 600000)]
+    // Skipped, not deleted: the round-trip property it checks — parse, serialise, parse again,
+    // and get the same text — is worth keeping, but the corpus it reads has never been in this
+    // repository. tests/css/phase0/css-engine-differential-corpus.json appears in no commit on
+    // any branch, so the test threw DirectoryNotFoundException on every run there has ever been,
+    // and it did so from FindCorpusPath before reaching a single assertion.
+    //
+    // A declared skip rather than an early return, because the two report differently and only
+    // one of them is true: an early return would show green, claiming a corpus was checked when
+    // none exists. Committing the corpus is what retires this — delete the Skip then. xunit
+    // 2.5.3 has no conditional skip, so it cannot be made to depend on the file being present.
+    [Fact(Timeout = 600000, Skip = "Corpus tests/css/phase0/css-engine-differential-corpus.json is not in this repository.")]
     public void Phase_Zero_Corpus_Parses_And_Serializes_Stably()
     {
         var corpusPath = FindCorpusPath();
