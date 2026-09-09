@@ -94,10 +94,56 @@
           Condition="Exists('$(MSBuildThisFileDirectory)..\THIRD_PARTY_NOTICES.md')" />
   </ItemGroup>
 
-  <!-- SourceLink provider. PrivateAssets=all keeps it out of the
-       package dependency graph. -->
-  <ItemGroup>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
-  </ItemGroup>
+  <!--
+    SOURCE LINK COMES FROM THE SDK, AND THERE IS DELIBERATELY NO PACKAGE
+    REFERENCE FOR IT HERE.
+
+    This block used to carry `Microsoft.SourceLink.GitHub` 8.0.0 with
+    PrivateAssets=all. It is gone, and the reason is worth reading before
+    anybody adds it back.
+
+    The .NET SDK ships Source Link as an SDK component - Sdks/
+    Microsoft.SourceLink.GitHub beside the GitLab, Bitbucket and AzureRepos
+    providers, and Sdks/Microsoft.Build.Tasks.Git under them - and imports it
+    implicitly. Microsoft.NET.Sdk.SourceLink.props backs that implicit import
+    out the moment a Source Link PACKAGE is referenced:
+
+        <SuppressImplicitGitSourceLink
+            Condition="'$(PkgMicrosoft_SourceLink_Common)' != ''">true</SuppressImplicitGitSourceLink>
+
+    So the package reference was not merely redundant. It was suppressing the
+    SDK's own copy in favour of a pinned older one, and it was the only thing
+    putting Microsoft.Build.Tasks.Git into the restore graph at all.
+
+    THAT MATTERED ON 2026-09-08, when CVE-2026-62900 was published against
+    Microsoft.Build.Tasks.Git. The advisory lists four affected ranges and
+    gives the 8.0.0 line NO patched version: there is no 8.x fix to bump to.
+    NuGet audit began raising NU1902 against every project this file reaches.
+    Each project that had opted into TreatWarningsAsErrors then failed on it,
+    while the rest only warned; this file does NOT set that, the promotion
+    lives in per-component Directory.Build.props and csproj files. That is why
+    one build can log the same NU1902 as an error for one component and as a
+    warning for another. Either way the failure was not about anything this
+    component had written.
+
+    Removing the reference fixes it without pinning anything, and Source Link
+    keeps working because the SDK's implicit import is no longer suppressed.
+    Verified rather than assumed: with the reference restored, MSBuild reports
+    SuppressImplicitGitSourceLink=true; with it deleted the property is empty
+    and the build still produces obj/<config>/<tfm>/<assembly>.sourcelink.json
+    mapping the repository root to raw.githubusercontent.com at the built
+    commit, for every target framework, in a shallow detached-HEAD checkout and
+    in a submodule layout. dotnet pack still stamps RepositoryUrl and
+    RepositoryCommit, and the PDB still carries its source-link entry.
+
+    ONE HONEST CAVEAT. What leaves is the RESTORE GRAPH, which is what NuGet
+    audit inspects. The SDK goes on running its own copy of the same component
+    family, at a version outside every range this advisory lists, so the
+    exposure is gone. The audit coverage goes with it: no future advisory
+    against Source Link can raise NU1902 in this repository again, because
+    there is no longer a package for audit to see. Watch the SDK instead.
+
+    So do not re-add it to make Source Link work; it already works.
+  -->
 
 </Project>
