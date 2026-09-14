@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -13,11 +13,14 @@
     <!-- Phase 1 item 4: resolve the canonical Broiler.Dom kernel through $(BroilerDomPath)
          (nested checkout for standalone builds; single root checkout in the main solution)
          so the main build does not create a second Broiler.Dom project node. -->
-    <ProjectReference Include="$(BroilerDomPath)" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Broiler.CSS.Dom.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Broiler.Dom" Version="0.1.0-preview.1" />
   </ItemGroup>
 
 </Project>

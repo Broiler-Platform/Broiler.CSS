@@ -3,5 +3,4 @@
   <Project Path="Broiler.CSS.Dom/Broiler.CSS.Dom.csproj" />
   <Project Path="Broiler.CSS.Tests/Broiler.CSS.Tests.csproj" />
   <Project Path="Broiler.CSS/Broiler.CSS.csproj" />
-  <Project Path="Broiler.DOM/Broiler.Dom/Broiler.Dom.csproj" />
 </Solution>
