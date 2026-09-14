@@ -2,7 +2,7 @@ namespace Broiler.CSS.Tests;
 
 public sealed class CssKernelTests
 {
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Parser_Preserves_Rules_AtRules_And_Raw_Values()
     {
         const string css = """
@@ -33,7 +33,7 @@ public sealed class CssKernelTests
         Assert.Equal("RED", style.Declarations.GetPropertyValue("color"));
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Declaration_Parser_Recovers_And_Last_Declaration_Wins()
     {
         var declarations = new CssParser().ParseDeclarations(
@@ -96,7 +96,7 @@ public sealed class CssKernelTests
         Assert.Equal(new CssColor(red, green, blue, alpha), color);
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Serialization_Is_Deterministic_And_RoundTrips()
     {
         const string source = """
@@ -112,7 +112,7 @@ public sealed class CssKernelTests
         Assert.Contains("color: RED !important;", first, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Individual_Rules_And_Declaration_Blocks_Can_Be_Serialized()
     {
         var parser = new CssParser();
@@ -127,7 +127,7 @@ public sealed class CssKernelTests
             CssSerializer.Serialize(styleRule.Declarations).ReplaceLineEndings("\n"));
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Parser_Reports_Unterminated_And_Malformed_Input()
     {
         var sheet = new CssParser().ParseStyleSheet(
@@ -138,7 +138,7 @@ public sealed class CssKernelTests
         Assert.Equal(2, sheet.Rules.Count);
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Unclosed_Parenthesis_In_Value_Swallows_Following_Braces_Until_Matched()
     {
         // CSS Syntax "consume a simple block": a } that sits inside an unclosed
@@ -171,7 +171,7 @@ public sealed class CssKernelTests
     // one of them is true: an early return would show green, claiming a corpus was checked when
     // none exists. Committing the corpus is what retires this — delete the Skip then. xunit
     // 2.5.3 has no conditional skip, so it cannot be made to depend on the file being present.
-    [Fact(Timeout = 600000, Skip = "Corpus tests/css/phase0/css-engine-differential-corpus.json is not in this repository.")]
+    [Fact(Skip = "Corpus tests/css/phase0/css-engine-differential-corpus.json is not in this repository.")]
     public void Phase_Zero_Corpus_Parses_And_Serializes_Stably()
     {
         var corpusPath = FindCorpusPath();

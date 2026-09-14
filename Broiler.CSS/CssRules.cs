@@ -12,6 +12,8 @@ public sealed class CssStyleRule(CssSelectorList selectors, CssDeclarationBlock 
 {
     public CssSelectorList Selectors { get; } = selectors;
 
+    public CssSourceRange Range { get; } = range;
+
     public CssDeclarationBlock Declarations { get; } = declarations;
 }
 
@@ -21,6 +23,8 @@ public sealed class CssAtRule(string name, string prelude, string? blockText, Cs
     private readonly ReadOnlyCollection<CssRule> _rules = (rules ?? []).ToList().AsReadOnly();
 
     public string Name { get; } = name;
+
+    public CssSourceRange Range { get; } = range;
 
     public string Prelude { get; } = prelude;
 

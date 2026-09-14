@@ -86,7 +86,7 @@ public sealed partial class CssStyleEngine
             .Where(kv => kv.Key.StartsWith("--", StringComparison.Ordinal))
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
-        var parentElement = ParentElement(element);
+        var parentElement = element.ParentElement;
         var parentResolved = parentElement != null
             ? BuildResolvedCustomPropertyMap(parentElement, registrations)
             : null;
@@ -109,7 +109,7 @@ public sealed partial class CssStyleEngine
         var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, string>? parentResolved = null;
 
-        var parentElement = ParentElement(element);
+        var parentElement = element.ParentElement;
         if (parentElement != null)
         {
             parentResolved = BuildResolvedCustomPropertyMap(parentElement, registrations);

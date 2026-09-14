@@ -352,7 +352,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         // Parent computed style — used only to resolve relative font-weight and to fold
         // the `inherit` keyword, never to backfill inherited properties (the renderer's
         // own InheritStyle does that).
-        var parentElement = ParentElement(element);
+        var parentElement = element.ParentElement;
         IReadOnlyDictionary<string, string>? parentProps = null;
         if (parentElement is not null && ancestorsInProgress.Add(parentElement))
         {
@@ -503,7 +503,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
 
         // Inheritance source: the parent element's computed style (full), or its sparse
         // projection when sparseInheritance is set. Guard against cycles in malformed trees.
-        var parentElement = ParentElement(element);
+        var parentElement = element.ParentElement;
         IReadOnlyDictionary<string, string>? parentProps = null;
         if (parentElement is not null && ancestorsInProgress.Add(parentElement))
         {
@@ -1109,9 +1109,6 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     }
 
     // ---- Element access over the canonical DOM ----------------------------
-
-    private static DomElement? ParentElement(DomElement element) =>
-        element.ParentNode as DomElement;
 
     private static string? Attr(DomElement element, string name) =>
         element.GetAttribute(name);

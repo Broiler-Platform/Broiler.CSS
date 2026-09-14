@@ -140,7 +140,7 @@ public static class CssLengthParser
     private static double PercentZoom => _percentZoom > 0 ? _percentZoom : 1.0;
 
     /// <summary>
-    /// Sets the viewport dimensions used by <see cref="ParseLength"/> to
+    /// Sets the viewport dimensions used by <see cref="ParseLength(string, double, double, bool)"/> to
     /// resolve CSS viewport-relative units, assuming a horizontal writing mode
     /// for the logical units (<c>vi</c>/<c>vb</c>).
     /// </summary>
@@ -148,7 +148,7 @@ public static class CssLengthParser
         SetViewportSize(width, height, rootWritingMode: null);
 
     /// <summary>
-    /// Sets the viewport dimensions used by <see cref="ParseLength"/> to resolve
+    /// Sets the viewport dimensions used by <see cref="ParseLength(string, double, double, bool)"/> to resolve
     /// CSS viewport-relative units, mapping the logical units against
     /// <paramref name="rootWritingMode"/>.
     /// <para>
@@ -313,10 +313,10 @@ public static class CssLengthParser
     public static double ParseLength(string length, double hundredPercent, double emFactor, bool fontAdjust = false) =>
         ParseLength(length, hundredPercent, emFactor, null, fontAdjust, false);
 
-    public static double ParseLength(string length, double hundredPercent, double emFactor, string defaultUnit) =>
+    public static double ParseLength(string length, double hundredPercent, double emFactor, string? defaultUnit) =>
         ParseLength(length, hundredPercent, emFactor, defaultUnit, false, false);
 
-    public static double ParseLength(string length, double hundredPercent, double emFactor, string defaultUnit,
+    public static double ParseLength(string length, double hundredPercent, double emFactor, string? defaultUnit,
         bool fontAdjust, bool returnPoints, double? lineHeightFactor = null, double? rootLineHeightFactor = null)
     {
         //Return zero if no length specified, zero specified
@@ -365,7 +365,7 @@ public static class CssLengthParser
 
     /// <summary>
     /// Resolves a CSS unit token to its multiplicative CSS-pixel factor. Single
-    /// source of the unit → pixel table, shared by <see cref="ParseLength"/> and
+    /// source of the unit → pixel table, shared by <see cref="ParseLength(string, double, double, bool)"/> and
     /// <see cref="TryParseSimpleLength"/>. Returns <see cref="double.NaN"/> for an
     /// unrecognized unit; callers map that to their own behaviour (ParseLength →
     /// factor 0; the math-expression evaluator → parse failure). The <c>pt</c>
@@ -474,7 +474,7 @@ public static class CssLengthParser
     }
 
     private static bool TryEvaluateLengthExpression(string expression, double hundredPercent, double emFactor,
-        string defaultUnit, bool fontAdjust, bool returnPoints, double lineHeightFactor,
+        string? defaultUnit, bool fontAdjust, bool returnPoints, double lineHeightFactor,
         double rootLineHeightFactor, out double result)
     {
         if (TryEvaluateLengthExpressionCore(expression, hundredPercent, emFactor,
@@ -491,7 +491,7 @@ public static class CssLengthParser
     }
 
     private static bool TryEvaluateLengthExpressionCore(string expression,
-        double hundredPercent, double emFactor, string defaultUnit, bool fontAdjust,
+        double hundredPercent, double emFactor, string? defaultUnit, bool fontAdjust,
         bool returnPoints, double lineHeightFactor, double rootLineHeightFactor, bool insideMathFunction,
         out LengthEvaluation evaluation)
     {
@@ -620,7 +620,7 @@ public static class CssLengthParser
         string expression,
         double hundredPercent,
         double emFactor,
-        string defaultUnit,
+        string? defaultUnit,
         bool fontAdjust,
         bool returnPoints,
         double lineHeightFactor,
@@ -698,7 +698,7 @@ public static class CssLengthParser
         string expression,
         double hundredPercent,
         double emFactor,
-        string defaultUnit,
+        string? defaultUnit,
         bool fontAdjust,
         bool returnPoints,
         double lineHeightFactor,
@@ -1166,7 +1166,7 @@ public static class CssLengthParser
     /// string and sets <paramref name="hasUnit"/>; falls back to
     /// <paramref name="defaultUnit"/> when no unit is present.
     /// </summary>
-    internal static string GetUnit(string length, string defaultUnit, out bool hasUnit) =>
+    internal static string GetUnit(string length, string? defaultUnit, out bool hasUnit) =>
         GetUnit(length, defaultUnit, out hasUnit, out _);
 
     /// <summary>
@@ -1181,7 +1181,7 @@ public static class CssLengthParser
     /// <paramref name="unitLength"/>, not <c>unit.Length</c>.
     /// </para>
     /// </summary>
-    internal static string GetUnit(string length, string defaultUnit, out bool hasUnit, out int unitLength)
+    internal static string GetUnit(string length, string? defaultUnit, out bool hasUnit, out int unitLength)
     {
         // The viewport family (vw/vh/vi/vb, vmin/vmax, and their sv*/lv*/dv*
         // variants) is scanned longest-spelling-first in one place, so "svmin" is

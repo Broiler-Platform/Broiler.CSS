@@ -1,30 +1,12 @@
-﻿<Project>
-
-  <!-- Chain to a parent Directory.Build.props when one exists (in-tree build).
-       Skipped for standalone / submodule builds. The path is captured in a
-       property first so the inner quotes don't collide with the Condition. -->
-  <PropertyGroup>
-    <BroilerParentBuildProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))</BroilerParentBuildProps>
-  </PropertyGroup>
-  <Import Project="$(BroilerParentBuildProps)" Condition="'$(BroilerParentBuildProps)' != ''" />
+<Project>
 
   <!-- Broiler NuGet packaging metadata (vendored; do not edit by hand). -->
   <Import Project="$(MSBuildThisFileDirectory)eng\Broiler.Packaging.props" />
 
-  <!-- HtmlBridge Phase 1 (project-graph repair) item 4: default the canonical Broiler.Dom
-       kernel path to this submodule's nested Broiler.DOM checkout for STANDALONE builds.
-       In the in-tree main build the parent Directory.Build.props (imported above) sets
-       $(BroilerDomPath) to the single root checkout first, so this conditional is skipped and
-       Broiler.CSS.Dom resolves to the one shared Broiler.Dom node. -->
+  <!-- Repository-owned packaging overrides. -->
   <PropertyGroup>
-    <BroilerDomPath Condition="'$(BroilerDomPath)' == ''">$(MSBuildThisFileDirectory)Broiler.DOM\Broiler.Dom\Broiler.Dom.csproj</BroilerDomPath>
-  </PropertyGroup>
-
-  <!-- This submodule carries a nested Broiler.DOM checkout used only as a build
-       dependency. Broiler.Dom / Broiler.Dom.Html ship from the Broiler.DOM
-       submodule, so exclude the nested copy here to avoid duplicate package ids. -->
-  <PropertyGroup Condition="$(MSBuildProjectDirectory.Replace('\','/').Contains('/Broiler.DOM/'))">
-    <IsPackable>false</IsPackable>
+    <PackageProjectUrl>https://github.com/Broiler-Platform/Broiler.CSS</PackageProjectUrl>
+    <PackageTags>broiler;css;selectors;cascade;parser</PackageTags>
   </PropertyGroup>
 
 </Project>

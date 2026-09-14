@@ -22,13 +22,46 @@ HTML Renderer component or as endorsed by that project's contributors.
 
 ## Build and test
 
-Initialize the nested DOM submodule, then build or test the solution:
+`Broiler.CSS.Dom` consumes `Broiler.Dom` as a package from GitHub Packages, so a fresh
+restore needs feed credentials (see below).
 
 ```bash
-git submodule update --init --recursive
-dotnet build Broiler.CSS.slnx
-dotnet test Broiler.CSS.slnx
+dotnet build Broiler.CSS.slnx -c Release
+pwsh -File eng/run-tests.ps1 -Configuration Release
+node --test eng/resolve-preview-version.test.mjs
+pwsh -File eng/pack.ps1
 ```
+
+### Consuming Broiler packages from GitHub Packages
+
+`NuGet.config` pins two sources — nuget.org and the Broiler-Platform GitHub Packages
+feed — and clears whatever the machine has configured. Package source mapping sends
+`Broiler.*` to GitHub Packages and everything else to nuget.org. Versions are pinned
+in `Directory.Packages.props`.
+
+GitHub Packages requires authentication **even for public packages**. Create a personal
+access token with the `read:packages` scope and put it in your **user-level** config,
+never in the committed one:
+
+```bash
+dotnet nuget update source broiler-github --username <github-user> --password <pat> --store-password-in-clear-text --configfile "$APPDATA/NuGet/NuGet.Config"
+```
+
+In GitHub Actions the workflows supply `secrets.GITHUB_TOKEN` through
+`NuGetPackageSourceCredentials_broiler-github`. `Broiler.Dom` must grant this repository
+Actions read access; `packages: read` alone does not grant access to packages owned by
+another repository.
+
+## Continuous integration and publishing
+
+CI builds and tests `Release` on Ubuntu and Windows, then packs and verifies both
+packages on Ubuntu and attaches them as `nuget-packages`. **Publish** (manual, or a
+`v0.1.0-preview.N` tag for NuGet.org) resolves the next unused preview version, reruns
+CI with it, verifies a fresh consumer restore from the destination feed, and pushes the
+validated packages. `dry-run=true` is the default. The workflow and `eng/` scripts are
+shared with Broiler.DOM and Broiler.Documents.
+
+Publishing to NuGet.org also requires `Broiler.Dom` to be available there first.
 
 ## Documentation
 

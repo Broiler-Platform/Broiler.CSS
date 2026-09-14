@@ -5,55 +5,83 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      package-version:
+        description: Resolved preview version for a publish run
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  packages: read
 
-# A later push on the same branch cancels the earlier run: what is checked does
-# not change, only how many times an abandoned commit is checked.
+env:
+  PACKAGE_VERSION: ${{ inputs.package-version }}
+  # Broiler.Dom restores from GitHub Packages, which needs credentials even for public packages.
+  NuGetPackageSourceCredentials_broiler-github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
-    # Named per matrix entry rather than left to the runner label, so the branch
-    # protection context is a sentence and not `ubuntu-latest`. Renaming one of
-    # these renames a required check; update the protection list with it.
-    name: ${{ matrix.name }}
+  build:
+    name: ${{ matrix.os }} / Release
     runs-on: ${{ matrix.os }}
-
     defaults:
       run:
         shell: bash
-
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Tests (Linux)
-            os: ubuntu-latest
-          - name: Tests (Windows)
-            os: windows-latest
-
+        os: [ubuntu-latest, windows-latest]
     steps:
-      # Recursive: Broiler.DOM carries the canonical Dom kernel that this
-      # repository resolves through $(BroilerDomPath) — see the ProjectReference
-      # in Broiler.CSS.Dom.csproj — and nothing restores without it.
       - name: Check out
         uses: actions/checkout@v7
-        with:
-          submodules: recursive
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
-      - name: Build
-        run: dotnet build Broiler.CSS.slnx -c Release --nologo
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
 
-      # Both suites are xunit, so `dotnet test` discovers them; there is no
-      # self-hosted runner here as there is in Broiler.Graphics.
+      - name: Test preview version selection
+        run: node --test eng/resolve-preview-version.test.mjs
+
+      - name: Build
+        run: |
+          args=()
+          if [ -n "$PACKAGE_VERSION" ]; then
+            args+=("-p:Version=$PACKAGE_VERSION" "-p:PackageVersion=$PACKAGE_VERSION")
+          fi
+          dotnet build Broiler.CSS.slnx -c Release --nologo "${args[@]}"
+
       - name: Test
-        run: dotnet test Broiler.CSS.slnx -c Release --nologo --no-build
+        shell: pwsh
+        run: ./eng/run-tests.ps1 -Configuration Release
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: warn
+
+      - name: Pack and verify every package
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh
+        run: ./eng/pack.ps1 -Version $env:PACKAGE_VERSION
+
+      - name: Upload packages
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuget-packages
+          path: artifacts/*
+          if-no-files-found: error

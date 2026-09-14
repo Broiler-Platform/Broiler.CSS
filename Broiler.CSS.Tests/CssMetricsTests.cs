@@ -13,7 +13,7 @@ public sealed class CssMetricsTests
     // acknowledging the intentional precision improvement.
     private const int LiteralPrecision = 6;
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Absolute_Factors_Match_Their_Definitions()
     {
         Assert.Equal(96.0, CssMetrics.Dpi);
@@ -26,7 +26,7 @@ public sealed class CssMetricsTests
         Assert.Equal(12.0 * CssMetrics.PtToPx, CssMetrics.PxPerPica);
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Derived_Factors_Are_Internally_Consistent()
     {
         Assert.Equal(CssMetrics.PxPerMm * 10.0, CssMetrics.PxPerCm, 12);
@@ -37,7 +37,7 @@ public sealed class CssMetricsTests
         Assert.Equal(1.0, CssMetrics.PtToPx * CssMetrics.PxToPt, 12);
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Factors_Match_The_Historical_Inline_Literals()
     {
         // These are the exact literals currently living in CssLengthParser.cs
@@ -50,7 +50,7 @@ public sealed class CssMetricsTests
         Assert.Equal(96.0 / 72.0, CssMetrics.PtToPx, LiteralPrecision);           // "1 point = 1/72 of inch"
     }
 
-    [Fact(Timeout = 600000)]
+    [Fact]
     public void Font_And_LineHeight_Defaults_Match_Current_Constants()
     {
         Assert.Equal(CssConstants.FontSize, CssMetrics.DefaultFontSizePt);

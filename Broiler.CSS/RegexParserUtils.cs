@@ -63,9 +63,9 @@ public static partial class RegexParserUtils
 
     public static MatchCollection Match(Regex regex, string source) => regex.Matches(source);
 
-    public static string Search(Regex regex, string source) => Search(regex, source, out _);
+    public static string? Search(Regex regex, string source) => Search(regex, source, out _);
 
-    public static string Search(Regex regex, string source, out int position)
+    public static string? Search(Regex regex, string source, out int position)
     {
         MatchCollection matches = Match(regex, source);
 

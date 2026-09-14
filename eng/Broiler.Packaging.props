@@ -9,7 +9,9 @@
     This file is the single source of truth. It is VENDORED into each
     component at <Component>/eng/Broiler.Packaging.props by
     scripts/sync-packaging.ps1, so every component builds and packs
-    standalone with no dependency on a parent-repo file.
+    standalone with no dependency on a parent-repo file. Cross-component
+    publication gates are tracked in the aggregate repository's
+    docs/ROADMAP.md under "Release and distribution".
 
     DO NOT edit the vendored copies by hand. Edit this canonical file
     and re-run the sync script.
@@ -37,7 +39,7 @@
     <!-- Project / repository links. RepositoryUrl is filled by SourceLink
          from the component's own git origin (PublishRepositoryUrl below),
          which keeps each component self-contained. -->
-    <PackageProjectUrl>https://github.com/MaiRat</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/Broiler-Platform</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
 
     <!-- README + icon are packed by the ItemGroup below. -->
@@ -72,6 +74,9 @@
     <!-- Symbol packages -->
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- EnablePackageValidation is added in Phase 5 with a published
+         PackageValidationBaselineVersion, where the API/version diff is
+         meaningful; on a baseline-less first release it adds little. -->
 
     <!-- Reproducible builds + SourceLink -->
     <Deterministic>true</Deterministic>
@@ -99,8 +104,10 @@
     REFERENCE FOR IT HERE.
 
     This block used to carry `Microsoft.SourceLink.GitHub` 8.0.0 with
-    PrivateAssets=all. It is gone, and the reason is worth reading before
-    anybody adds it back.
+    PrivateAssets=all, plus a Remove that kept the import idempotent when one
+    component is checked out inside another and both vendored copies of this
+    file are imported. Both lines are gone, and the reason is worth reading
+    before anybody adds them back.
 
     The .NET SDK ships Source Link as an SDK component - Sdks/
     Microsoft.SourceLink.GitHub beside the GitLab, Bitbucket and AzureRepos

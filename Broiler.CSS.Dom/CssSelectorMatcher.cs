@@ -34,7 +34,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         switch (parts[index + 1].Combinator)
         {
             case ' ':
-                for (var ancestor = Parent(current); ancestor is not null; ancestor = Parent(ancestor))
+                for (var ancestor = current.ParentElement; ancestor is not null; ancestor = ancestor.ParentElement)
                 {
                     if (MatchesCompound(ancestor, compound, scope) &&
                         MatchBackwards(parts, index - 1, ancestor, scope))
@@ -42,19 +42,19 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 }
                 return false;
             case '>':
-                var parent = Parent(current);
+                var parent = current.ParentElement;
                 return parent is not null &&
                     MatchesCompound(parent, compound, scope) &&
                     MatchBackwards(parts, index - 1, parent, scope);
             case '+':
-                var previous = PreviousElementSibling(current);
+                var previous = current.PreviousElementSibling;
                 return previous is not null &&
                     MatchesCompound(previous, compound, scope) &&
                     MatchBackwards(parts, index - 1, previous, scope);
             case '~':
-                for (var sibling = PreviousElementSibling(current);
+                for (var sibling = current.PreviousElementSibling;
                      sibling is not null;
-                     sibling = PreviousElementSibling(sibling))
+                     sibling = sibling.PreviousElementSibling)
                 {
                     if (MatchesCompound(sibling, compound, scope) &&
                         MatchBackwards(parts, index - 1, sibling, scope))
@@ -296,8 +296,8 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         IEnumerable<DomElement> candidates = combinator switch
         {
             ' ' => element.Descendants().OfType<DomElement>(),
-            '>' => Children(element),
-            '+' => NextElementSibling(element) is { } next ? [next] : [],
+            '>' => element.ChildElements,
+            '+' => element.NextElementSibling is { } next ? [next] : [],
             '~' => FollowingElementSiblings(element),
             _ => [],
         };
@@ -379,7 +379,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     /// </summary>
     private static string Directionality(DomElement element)
     {
-        for (DomElement? current = element; current is not null; current = Parent(current))
+        for (DomElement? current = element; current is not null; current = current.ParentElement)
         {
             var declared = current.GetAttribute("dir");
 
@@ -472,7 +472,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool MatchesLanguage(DomElement element, string source)
     {
         string? language = null;
-        for (DomElement? current = element; current is not null; current = Parent(current))
+        for (DomElement? current = element; current is not null; current = current.ParentElement)
         {
             language = current.GetAttribute("lang") ??
                 current.GetAttributeNS(DomNamespaces.Xml, "lang");
@@ -747,28 +747,11 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         return index < 0 ? 0 : siblings.Count - index;
     }
 
-    private static DomElement? Parent(DomElement element) => element.ParentNode as DomElement;
-    private static IEnumerable<DomElement> Children(DomElement element) => element.ChildNodes.OfType<DomElement>();
-    
-    private static DomElement? PreviousElementSibling(DomElement element)
-    {
-        for (var node = element.PreviousSibling; node is not null; node = node.PreviousSibling)
-            if (node is DomElement sibling) return sibling;
-        return null;
-    }
-    
-    private static DomElement? NextElementSibling(DomElement element)
-    {
-        for (var node = element.NextSibling; node is not null; node = node.NextSibling)
-            if (node is DomElement sibling) return sibling;
-        return null;
-    }
-    
     private static IEnumerable<DomElement> FollowingElementSiblings(DomElement element)
     {
-        for (var sibling = NextElementSibling(element);
+        for (var sibling = element.NextElementSibling;
              sibling is not null;
-             sibling = NextElementSibling(sibling))
+             sibling = sibling.NextElementSibling)
             yield return sibling;
     }
 
