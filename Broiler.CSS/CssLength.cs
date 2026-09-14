@@ -62,7 +62,7 @@ public sealed class CssLength
     }
 
     /// <summary>
-    /// Projects a unit token from <see cref="CssLengthParser.GetUnit"/> onto the
+    /// Projects a unit token from <see cref="CssLengthParser.GetUnit(string, string, out bool, out int)"/> onto the
     /// <see cref="CssUnit"/> enum plus its font/viewport-relative flag. Only the
     /// units the legacy <see cref="CssLength"/> parser recognized are accepted;
     /// <c>lh</c>/<c>rlh</c>/<c>Q</c> (and anything else) return <c>false</c>.
