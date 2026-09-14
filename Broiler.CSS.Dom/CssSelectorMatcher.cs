@@ -1018,6 +1018,20 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     }
 
     /// <summary>
+    /// The node's <c>textContent</c> with the semantics of <c>DomNode.TextContent</c>: a character-data
+    /// node's own data, otherwise the data of every text descendant in tree order.
+    /// </summary>
+    /// <remarks>
+    /// Bridge for <c>Broiler.Dom 0.1.0-preview.1</c>, which was packed before Broiler.DOM added
+    /// <c>DomNode.TextContent</c> (7863607). Delete it and call <c>TextContent</c> directly once
+    /// Directory.Packages.props references a Broiler.Dom preview that ships the property.
+    /// </remarks>
+    private static string TextContentOf(DomNode node) =>
+        node is DomCharacterData data
+            ? data.Data
+            : string.Concat(node.Descendants().Where(child => child.NodeType == DomNodeType.Text).Select(child => child.NodeValue));
+
+    /// <summary>
     /// Whether a required control has no value: the empty string for a text-like control, nothing
     /// checked for a checkbox, no option with a non-empty value for a select.
     /// <para>A radio button is never reported missing — the reference browser leaves an unchecked
@@ -1027,14 +1041,14 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool IsValueMissing(DomElement element)
     {
         if (IsNamed(element, "textarea"))
-            return element.TextContent.Length == 0;
+            return TextContentOf(element).Length == 0;
 
         if (IsNamed(element, "select"))
         {
             return !element.Descendants().OfType<DomElement>().Any(option =>
                 IsNamed(option, "option")
                 && option.HasAttribute("selected")
-                && (option.GetAttribute("value") ?? option.TextContent).Length > 0);
+                && (option.GetAttribute("value") ?? TextContentOf(option)).Length > 0);
         }
 
         if (!IsNamed(element, "input"))
