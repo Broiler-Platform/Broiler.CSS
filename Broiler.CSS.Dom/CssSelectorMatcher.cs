@@ -34,7 +34,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         switch (parts[index + 1].Combinator)
         {
             case ' ':
-                for (var ancestor = Parent(current); ancestor is not null; ancestor = Parent(ancestor))
+                for (var ancestor = current.ParentElement; ancestor is not null; ancestor = ancestor.ParentElement)
                 {
                     if (MatchesCompound(ancestor, compound, scope) &&
                         MatchBackwards(parts, index - 1, ancestor, scope))
@@ -42,19 +42,19 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 }
                 return false;
             case '>':
-                var parent = Parent(current);
+                var parent = current.ParentElement;
                 return parent is not null &&
                     MatchesCompound(parent, compound, scope) &&
                     MatchBackwards(parts, index - 1, parent, scope);
             case '+':
-                var previous = PreviousElementSibling(current);
+                var previous = current.PreviousElementSibling;
                 return previous is not null &&
                     MatchesCompound(previous, compound, scope) &&
                     MatchBackwards(parts, index - 1, previous, scope);
             case '~':
-                for (var sibling = PreviousElementSibling(current);
+                for (var sibling = current.PreviousElementSibling;
                      sibling is not null;
-                     sibling = PreviousElementSibling(sibling))
+                     sibling = sibling.PreviousElementSibling)
                 {
                     if (MatchesCompound(sibling, compound, scope) &&
                         MatchBackwards(parts, index - 1, sibling, scope))
@@ -296,8 +296,8 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         IEnumerable<DomElement> candidates = combinator switch
         {
             ' ' => element.Descendants().OfType<DomElement>(),
-            '>' => Children(element),
-            '+' => NextElementSibling(element) is { } next ? [next] : [],
+            '>' => element.ChildElements,
+            '+' => element.NextElementSibling is { } next ? [next] : [],
             '~' => FollowingElementSiblings(element),
             _ => [],
         };
@@ -379,7 +379,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     /// </summary>
     private static string Directionality(DomElement element)
     {
-        for (DomElement? current = element; current is not null; current = Parent(current))
+        for (DomElement? current = element; current is not null; current = current.ParentElement)
         {
             var declared = current.GetAttribute("dir");
 
@@ -472,7 +472,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool MatchesLanguage(DomElement element, string source)
     {
         string? language = null;
-        for (DomElement? current = element; current is not null; current = Parent(current))
+        for (DomElement? current = element; current is not null; current = current.ParentElement)
         {
             language = current.GetAttribute("lang") ??
                 current.GetAttributeNS(DomNamespaces.Xml, "lang");
@@ -747,28 +747,11 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         return index < 0 ? 0 : siblings.Count - index;
     }
 
-    private static DomElement? Parent(DomElement element) => element.ParentNode as DomElement;
-    private static IEnumerable<DomElement> Children(DomElement element) => element.ChildNodes.OfType<DomElement>();
-    
-    private static DomElement? PreviousElementSibling(DomElement element)
-    {
-        for (var node = element.PreviousSibling; node is not null; node = node.PreviousSibling)
-            if (node is DomElement sibling) return sibling;
-        return null;
-    }
-    
-    private static DomElement? NextElementSibling(DomElement element)
-    {
-        for (var node = element.NextSibling; node is not null; node = node.NextSibling)
-            if (node is DomElement sibling) return sibling;
-        return null;
-    }
-    
     private static IEnumerable<DomElement> FollowingElementSiblings(DomElement element)
     {
-        for (var sibling = NextElementSibling(element);
+        for (var sibling = element.NextElementSibling;
              sibling is not null;
-             sibling = NextElementSibling(sibling))
+             sibling = sibling.NextElementSibling)
             yield return sibling;
     }
 
@@ -1018,20 +1001,6 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     }
 
     /// <summary>
-    /// The node's <c>textContent</c> with the semantics of <c>DomNode.TextContent</c>: a character-data
-    /// node's own data, otherwise the data of every text descendant in tree order.
-    /// </summary>
-    /// <remarks>
-    /// Bridge for <c>Broiler.Dom 0.1.0-preview.1</c>, which was packed before Broiler.DOM added
-    /// <c>DomNode.TextContent</c> (7863607). Delete it and call <c>TextContent</c> directly once
-    /// Directory.Packages.props references a Broiler.Dom preview that ships the property.
-    /// </remarks>
-    private static string TextContentOf(DomNode node) =>
-        node is DomCharacterData data
-            ? data.Data
-            : string.Concat(node.Descendants().Where(child => child.NodeType == DomNodeType.Text).Select(child => child.NodeValue));
-
-    /// <summary>
     /// Whether a required control has no value: the empty string for a text-like control, nothing
     /// checked for a checkbox, no option with a non-empty value for a select.
     /// <para>A radio button is never reported missing — the reference browser leaves an unchecked
@@ -1041,14 +1010,14 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool IsValueMissing(DomElement element)
     {
         if (IsNamed(element, "textarea"))
-            return TextContentOf(element).Length == 0;
+            return element.TextContent.Length == 0;
 
         if (IsNamed(element, "select"))
         {
             return !element.Descendants().OfType<DomElement>().Any(option =>
                 IsNamed(option, "option")
                 && option.HasAttribute("selected")
-                && (option.GetAttribute("value") ?? TextContentOf(option)).Length > 0);
+                && (option.GetAttribute("value") ?? option.TextContent).Length > 0);
         }
 
         if (!IsNamed(element, "input"))

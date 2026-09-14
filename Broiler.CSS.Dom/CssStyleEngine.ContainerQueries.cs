@@ -61,11 +61,11 @@ public sealed partial class CssStyleEngine
     /// </summary>
     private DomElement? FindStyleQueryContainer(DomElement element, string? pseudoElement, string? name)
     {
-        var start = pseudoElement is not null ? element : ParentElement(element);
+        var start = pseudoElement is not null ? element : element.ParentElement;
         if (name is null)
             return start;
 
-        for (var ancestor = start; ancestor is not null; ancestor = ParentElement(ancestor))
+        for (var ancestor = start; ancestor is not null; ancestor = ancestor.ParentElement)
         {
             var declared = GetCascadedDeclarationMap(ancestor, null, includeInlineStyle: true);
             if (ContainerNameMatches(declared.GetValueOrDefault("container-name"), name))
@@ -114,8 +114,8 @@ public sealed partial class CssStyleEngine
     /// </summary>
     private ContainerBox? FindQueryContainer(DomElement element, string? pseudoElement, string? name)
     {
-        var start = pseudoElement is not null ? element : ParentElement(element);
-        for (var ancestor = start; ancestor is not null; ancestor = ParentElement(ancestor))
+        var start = pseudoElement is not null ? element : element.ParentElement;
+        for (var ancestor = start; ancestor is not null; ancestor = ancestor.ParentElement)
         {
             var declared = GetCascadedDeclarationMap(ancestor, null, includeInlineStyle: true);
             var type = (declared.GetValueOrDefault("container-type") ?? "normal").Trim().ToLowerInvariant();
@@ -481,7 +481,7 @@ public sealed partial class CssStyleEngine
     /// </summary>
     private string? ResolveStyleQueryProperty(DomElement container, string name)
     {
-        for (var ancestor = container; ancestor is not null; ancestor = ParentElement(ancestor))
+        for (var ancestor = container; ancestor is not null; ancestor = ancestor.ParentElement)
         {
             var declared = GetCascadedDeclarationMap(ancestor, null, includeInlineStyle: true);
             if (declared.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
