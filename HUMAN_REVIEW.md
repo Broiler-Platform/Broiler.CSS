@@ -12,7 +12,7 @@
 - **Scope:** CSS syntax, rules, selectors, declarations, values, diagnostics, parsing,
   serialization, and DOM-facing CSS assemblies (`Broiler.CSS`, `Broiler.CSS.Dom`).
 - **Release:** Next preview (`0.1.0-preview.N`; the Publish workflow selects `N`)
-- **Commit:** `ad24a2066bcbbb60180d156f159cf13e02de4953`
+- **Commit:** `517358f9a2a003a240eca12f715a0227a1503399`
 - **Previously reviewed commit:** `44e5444cc29555e7112c2a2c06e5dcc0c661be5d`
 - **Reviewer:** _to be completed by the human reviewer_
 - **Reviewer handle:** _to be completed_
@@ -25,8 +25,8 @@ change after the commit above requires renewed review.
 
 ## Changes since the previously reviewed commit
 
-`git log 44e5444..ad24a20` has 175 commits; `git diff --shortstat 44e5444 ad24a20`
-reports 103 files changed, 16,979 insertions and 4,279 deletions, including tests and
+`git log 44e5444..517358f` has 179 commits; `git diff --shortstat 44e5444 517358f`
+reports 103 files changed, 16,918 insertions and 4,295 deletions, including tests and
 documentation. The themes below come from the recent first-parent history. They are not
 a substitute for reviewing the diff.
 
@@ -74,8 +74,11 @@ a substitute for reviewing the diff.
   - `CssStyleRule.Range` and `CssAtRule.Range` (#33)
   - `GetSparseComputedStyle` returning a fresh, caller-owned map as documented, instead of
     the engine's cached sparse map or a shared empty map (#46)
+  - `CssValueKind` removed; nothing in the Broiler-Platform organisation referenced it (#50)
 - **Build hygiene:** all compiler warnings fixed (#33, #34), and xUnit `Timeout`
-  removed from synchronous tests after the test-package update (#33).
+  removed from synchronous tests after the test-package update (#33); unused parameters, a
+  dead internal `GetUnit` overload, and private helpers with provably identical copies
+  removed without changing behaviour (#50).
 
 ## Evidence
 
@@ -90,13 +93,14 @@ review, not its result; the reviewer confirms it by ticking the checklist.
 
 ### Assembled evidence
 
-- **CI:** `CI` run 34945850700 on the target commit passed on `ubuntu-latest` and
+- **CI:** `CI` run 34948722137 on the target commit passed on `ubuntu-latest` and
   `windows-latest`. It covered the Release build, `eng/run-tests.ps1`, and package pack
   and verification, restoring the published `Broiler.Dom 0.1.0-preview.2` from GitHub
   Packages.
 - **Local build and tests:** run on 2026-09-15 on Windows with .NET SDK 10.0.400. The
-  tree was identical to the target commit, built against `Broiler.Dom 0.1.0-preview.2`
-  packed from the identical Broiler.DOM source.
+  source was identical to the target commit (the tested tree differs from it only in this
+  file), built against `Broiler.Dom 0.1.0-preview.2` packed from the identical Broiler.DOM
+  source.
   - `dotnet build Broiler.CSS.slnx -c Release --no-incremental`: 0 warnings, 0 errors.
   - `Broiler.CSS.Tests`: 399 passed, 0 failed, 1 skipped (a corpus that is not in this
     repository).
@@ -132,8 +136,17 @@ dotnet build .\Broiler.CSS.slnx -c Release
 
 ### Open items from an AI-assisted code review (2026-09-14), not yet confirmed by the reviewer
 
-- **Duplication and dead code:** duplicated top-level scanners and unit tables, and
-  public types with no references in this repository.
+- **Remaining duplication (narrowed 2026-09-15):** the dead code and the private helpers with
+  provably identical copies were removed in #50. What remains:
+  - about 15 top-level bracket-matching and splitting helpers whose quote, escape and
+    comment handling differ, so merging them would change behaviour
+  - unit tables that disagree: `CssValueParser.ParseUnit`, `CssLength` and
+    `CssLengthParser.GetUnit` (`CssLength`'s narrower unit set is deliberate and pinned by
+    tests)
+
+  Public types with no references in this repository, such as `RegexParserUtils`,
+  `CssLengthScaler`, `CssZoom` and `CssAnimation`, are used by `Broiler` and `Broiler.HTML`,
+  so they are not dead code.
 
 ## Decision
 
