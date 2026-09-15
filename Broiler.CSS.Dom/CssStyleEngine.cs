@@ -52,12 +52,25 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     // correct, so it survives the change deliberately rather than by omission.
     private readonly Lock _sync = new();
     private readonly List<StyleSheetEntry> _sheets = [];
-    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo), CssComputedStyle> _cache = new();
+    // The per-thread inputs a cached result depends on. CssDocumentMode.QuirksMode (which
+    // declarations are valid) and CssPagedMedia (the media type, and the page area the width/height
+    // features read) are [ThreadStatic] render levers, while every memo and rule index here is shared
+    // by all threads — so each result is keyed by the mode it was computed under. Keying rather than
+    // invalidating on a mode change is the point: two threads styling in different modes at once
+    // would otherwise keep reading each other's results between invalidations.
+    private readonly record struct RenderMode(bool QuirksMode, int PageWidth, int PageHeight)
+    {
+        public static RenderMode Current => CssPagedMedia.Active
+            ? new RenderMode(CssDocumentMode.QuirksMode, CssPagedMedia.Width, CssPagedMedia.Height)
+            : new RenderMode(CssDocumentMode.QuirksMode, 0, 0);
+    }
+
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, RenderMode Mode), CssComputedStyle> _cache = new();
     // Sparse computed-style memo: the specified + sparse-inheritance projection (no
     // initial-value backfill) that the HtmlBridge's GetComputedProps consumes. Keyed by
     // element (principal box; pseudo-elements are not on this recursion). Cleared with
     // _cache in InvalidateAll, so it shares the exact same correctness lifecycle.
-    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo), IReadOnlyDictionary<string, string>> _sparseCache = new();
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, RenderMode Mode), IReadOnlyDictionary<string, string>> _sparseCache = new();
     // Memoizes the declared cascade winners (stylesheets + optional inline) per
     // (element, pseudo, includeInline). The declared cascade is the hot inner step
     // shared by every GetComputedStyle/GetCascadedStyle/GetCascadedDeclaredValues
@@ -65,7 +78,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     // unlike the computed-style _cache, was previously recomputed from scratch each
     // time (linear selector scan of every UA + author rule). Cleared alongside
     // _cache in InvalidateAll, so it shares the exact same correctness lifecycle.
-    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, bool IncludeInline), IReadOnlyDictionary<string, string>> _declaredCascadeCache = [];
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, bool IncludeInline, RenderMode Mode), IReadOnlyDictionary<string, string>> _declaredCascadeCache = [];
     // Memoizes the renderer-facing cascade projection — GetCascadedStyle's whole result, not just
     // the declared winners _declaredCascadeCache holds. Everything between the two (custom-property
     // and var() resolution, CSS-wide keywords, shorthand expansion, attr() substitution, relative
@@ -74,7 +87,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     // writes into: the renderer resolves every element's cascade on N threads before the box walk,
     // and the box walk then reads results instead of computing them. Same lifecycle and same
     // generation guard as the sibling caches. The returned map is shared and read-only to callers.
-    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, bool IncludeInline), IReadOnlyDictionary<string, string>> _cascadedStyleCache = [];
+    private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, bool IncludeInline, RenderMode Mode), IReadOnlyDictionary<string, string>> _cascadedStyleCache = [];
     // Bumped by InvalidateAll; a declared-cascade computation captures it up front and
     // only memoizes its result if it is unchanged at the end, so a mid-cascade
     // stylesheet re-sync (host callback during selector matching, see the _sheets
@@ -84,9 +97,12 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     // The rule index is a function of the sheets alone, and _cacheGeneration is bumped on every
     // mutation, so keying the index on that would rebuild it constantly for no reason.
     private int _sheetGeneration;
-    // The cascade rule index for _sheetGeneration, built on first use (multithreading roadmap
-    // item #11). Immutable once built, so a cascade can hold it while the engine re-syncs.
-    private CssCascadeRuleIndex? _ruleIndex;
+    // The cascade rule indexes for _sheetGeneration, one per render mode, each built on first use
+    // (multithreading roadmap item #11). Building evaluates @media and @supports, and both read the
+    // thread's render mode — the paged context directly, quirks mode through @supports declaration
+    // validity — so one index cannot serve every mode. Guarded by _sync; each index is immutable
+    // once built, so a cascade can hold it while the engine re-syncs.
+    private readonly Dictionary<RenderMode, CssCascadeRuleIndex> _ruleIndexes = [];
     private int _ruleIndexGeneration = -1;
     // The document's @custom-media definitions for _sheetGeneration (Media Queries 5 §3).
     // Collected from every registered sheet rather than resolved in place, because a custom
@@ -202,7 +218,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         ObserveDocument(element);
 
         var normalizedPseudo = NormalizePseudoElement(pseudoElement);
-        var key = (element, normalizedPseudo);
+        var key = (element, normalizedPseudo, RenderMode.Current);
         if (_cache.TryGetValue(key, out var cached))
             return cached;
 
@@ -322,7 +338,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
 
         ObserveDocument(element);
 
-        var key = (element, NormalizePseudoElement(pseudoElement), includeInlineStyle);
+        var key = (element, NormalizePseudoElement(pseudoElement), includeInlineStyle, RenderMode.Current);
         if (_cascadedStyleCache.TryGetValue(key, out var cached))
             return cached;
 
@@ -484,7 +500,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
 
     private CssComputedStyle GetComputedStyleInternal(DomElement element, HashSet<DomElement> ancestorsInProgress)
     {
-        var key = ((DomElement, string?))(element, null);
+        var key = (element, (string?)null, RenderMode.Current);
         if (_cache.TryGetValue(key, out var cached))
             return cached;
 
@@ -500,7 +516,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     private IReadOnlyDictionary<string, string> GetSparseComputedStyleInternal(
         DomElement element, HashSet<DomElement> ancestorsInProgress)
     {
-        var key = ((DomElement, string?))(element, null);
+        var key = (element, (string?)null, RenderMode.Current);
         if (_sparseCache.TryGetValue(key, out var cached))
             return cached;
 
@@ -620,7 +636,9 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         string? pseudoElement,
         bool includeInlineStyle)
     {
-        var key = (element, pseudoElement, includeInlineStyle);
+        // The mode is captured once: it keys the memo, and it selects the rule index built under it.
+        var mode = RenderMode.Current;
+        var key = (element, pseudoElement, includeInlineStyle, mode);
         if (_declaredCascadeCache.TryGetValue(key, out var cached))
             return cached;
 
@@ -639,7 +657,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         lock (_sync)
         {
             generation = _cacheGeneration;
-            ruleIndex = UseRuleIndex ? GetOrBuildRuleIndex() : null;
+            ruleIndex = UseRuleIndex ? GetOrBuildRuleIndex(mode) : null;
             sheetsSnapshot = ruleIndex is null ? [.. _sheets] : [];
         }
 
@@ -721,10 +739,21 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     /// reason: selector matching can call back into the host, which may re-sync this engine's
     /// stylesheets mid-cascade. A cascade that started against one index finishes against it, and
     /// the generation guard at the end refuses to memoize a result that raced the change.
+    /// <para>
+    /// There is one index per <paramref name="mode"/>, and <paramref name="mode"/> must be the
+    /// calling thread's current mode: <see cref="CssCascadeRuleIndex.Build"/> runs its media and
+    /// supports callbacks right here, and they read that mode from the thread.
+    /// </para>
     /// </remarks>
-    private CssCascadeRuleIndex GetOrBuildRuleIndex()
+    private CssCascadeRuleIndex GetOrBuildRuleIndex(RenderMode mode)
     {
-        if (_ruleIndex is { } current && _ruleIndexGeneration == _sheetGeneration)
+        if (_ruleIndexGeneration != _sheetGeneration)
+        {
+            _ruleIndexes.Clear();
+            _ruleIndexGeneration = _sheetGeneration;
+        }
+
+        if (_ruleIndexes.TryGetValue(mode, out var current))
             return current;
 
         var sheets = new List<(CssStyleSheet Sheet, CssOrigin Origin)>(_sheets.Count);
@@ -736,12 +765,12 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
 
         var customMedia = GetOrBuildCustomMedia();
 
-        _ruleIndex = CssCascadeRuleIndex.Build(
+        var index = CssCascadeRuleIndex.Build(
             sheets,
             prelude => EvaluateMediaQuery(prelude, viewportWidth, viewportHeight, customMedia),
             prelude => SupportsConditionSyntax.EvaluatesTrue(prelude, IsFeatureQuerySupported));
-        _ruleIndexGeneration = _sheetGeneration;
-        return _ruleIndex;
+        _ruleIndexes[mode] = index;
+        return index;
     }
 
     /// <summary>
