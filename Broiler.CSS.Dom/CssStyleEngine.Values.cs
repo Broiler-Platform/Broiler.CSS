@@ -565,7 +565,7 @@ public sealed partial class CssStyleEngine
 
             case "font-weight":
                 return v is "normal" or "bold" or "bolder" or "lighter"
-                    || (int.TryParse(v, out var w) && w is >= 1 and <= 1000);
+                    || (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var w) && w is >= 1 and <= 1000);
 
             case "background":
                 return IsAcceptableBackgroundShorthand(v);
@@ -1412,7 +1412,7 @@ public sealed partial class CssStyleEngine
         if (!computed.TryGetValue("font-weight", out var fw) || string.IsNullOrEmpty(fw))
             return;
 
-        if (int.TryParse(fw, out _))
+        if (int.TryParse(fw, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
             return;
 
         if (fw.Equals("normal", StringComparison.OrdinalIgnoreCase))

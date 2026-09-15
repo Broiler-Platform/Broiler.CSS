@@ -720,8 +720,8 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             return false;
         var aText = compact[..n];
         var a = aText is "" or "+" ? 1 : aText == "-" ? -1 :
-            int.TryParse(aText, out var parsedA) ? parsedA : 0;
-        var b = int.TryParse(compact[(n + 1)..], out var parsedB) ? parsedB : 0;
+            int.TryParse(aText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedA) ? parsedA : 0;
+        var b = int.TryParse(compact[(n + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedB) ? parsedB : 0;
         return a == 0
             ? index == b
             : (index - b) % a == 0 && (index - b) / a >= 0;

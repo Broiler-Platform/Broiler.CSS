@@ -287,7 +287,7 @@ public static class CssLengthParser
             }
         }
 
-        return double.TryParse(number, out _);
+        return double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _);
     }
 
     public static double ParseNumber(string number, double hundredPercent)
@@ -978,7 +978,7 @@ public static class CssLengthParser
             return double.NaN;
         }
 
-        if (v.EndsWith("px"))
+        if (v.EndsWith("px", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var px) ? px : double.NaN;
 
         // CSS Values 3 §5.2: the absolute units are fixed multiples of the reference pixel, so
@@ -988,31 +988,31 @@ public static class CssLengthParser
         // no, and the `border` shorthand therefore read `border: 72pt solid red`'s first
         // component as a *colour* — leaving the width at `medium` and dropping the red. The
         // `in` spelling has to come after the viewport scan above, which claims `vmin`.
-        if (v.EndsWith("pt"))
+        if (v.EndsWith("pt", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var pt) ? pt * CssMetrics.PtToPx : double.NaN;
-        if (v.EndsWith("pc"))
+        if (v.EndsWith("pc", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var pc) ? pc * CssMetrics.PxPerPica : double.NaN;
-        if (v.EndsWith("in"))
+        if (v.EndsWith("in", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var inch) ? inch * CssMetrics.PxPerInch : double.NaN;
-        if (v.EndsWith("cm"))
+        if (v.EndsWith("cm", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var cm) ? cm * CssMetrics.PxPerCm : double.NaN;
-        if (v.EndsWith("mm"))
+        if (v.EndsWith("mm", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var mm) ? mm * CssMetrics.PxPerMm : double.NaN;
-        if (v.EndsWith("q"))
+        if (v.EndsWith("q", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 1, out var q) ? q * CssMetrics.PxPerQ : double.NaN;
-        if (v.EndsWith("rem"))
+        if (v.EndsWith("rem", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 3, out var rem) ? rem * 16.0 : double.NaN;
-        if (v.EndsWith("em"))
+        if (v.EndsWith("em", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var em) ? em * 16.0 : double.NaN;
-        if (v.EndsWith("ex"))
+        if (v.EndsWith("ex", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var ex) ? ex * 8.0 : double.NaN;
-        if (v.EndsWith("ch"))
+        if (v.EndsWith("ch", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var ch) ? ch * 8.0 : double.NaN;
-        if (v.EndsWith("ic"))
+        if (v.EndsWith("ic", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var ic) ? ic * 16.0 : double.NaN;
-        if (v.EndsWith("rlh"))
+        if (v.EndsWith("rlh", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 3, out var rlh) ? rlh * 19.2 : double.NaN;
-        if (v.EndsWith("lh"))
+        if (v.EndsWith("lh", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var lh) ? lh * 19.2 : double.NaN;
 
         if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var raw))
