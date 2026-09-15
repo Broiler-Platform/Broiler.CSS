@@ -287,7 +287,7 @@ public static class CssLengthParser
             }
         }
 
-        return double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _);
+        return TryParseCssNumber(number, out _);
     }
 
     public static double ParseNumber(string number, double hundredPercent)
@@ -301,7 +301,7 @@ public static class CssLengthParser
         if (isPercent)
             toParse = number[..^1];
 
-        if (!double.TryParse(toParse, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out double result))
+        if (!TryParseCssNumber(toParse, out double result))
             return 0f;
 
         if (isPercent)
@@ -723,7 +723,7 @@ public static class CssLengthParser
             if (insideMathFunction)
                 return false;
 
-            if (double.TryParse(value, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out double raw))
+            if (TryParseCssNumber(value, out double raw))
             {
                 evaluation = new LengthEvaluation(raw, IsUnitless: true);
                 return true;
@@ -736,7 +736,7 @@ public static class CssLengthParser
         // small/large/dynamic viewport variants canonicalise to something shorter
         // (svmin → vmin), so unit.Length would leave the prefix on the number.
         string number = value[..^unitLen];
-        if (!double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out double parsedNumber))
+        if (!TryParseCssNumber(number, out double parsedNumber))
             return false;
 
         double factor = UnitToPixelFactor(unit, emFactor, fontAdjust,
@@ -1015,7 +1015,7 @@ public static class CssLengthParser
         if (v.EndsWith("lh", StringComparison.Ordinal))
             return TryParseLeadingNumber(v, 2, out var lh) ? lh * 19.2 : double.NaN;
 
-        if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var raw))
+        if (TryParseCssNumber(v, out var raw))
         {
             unitless = true;
             return raw;
@@ -1078,7 +1078,62 @@ public static class CssLengthParser
     }
 
     private static bool TryParseLeadingNumber(string value, int suffixLength, out double result) =>
-        double.TryParse(value[..^suffixLength], NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+        TryParseCssNumber(value.AsSpan(0, value.Length - suffixLength), out result);
+
+    /// <summary>
+    /// Parses a CSS <c>&lt;number&gt;</c> (CSS Syntax 3 §4.3.12): an optional sign, digits with an
+    /// optional fraction or a fraction alone, and an optional exponent, and nothing else.
+    /// Surrounding white space is tolerated, as the <see cref="NumberStyles.Number"/> parsing this
+    /// replaces tolerated it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="double.TryParse(ReadOnlySpan{char}, NumberStyles, IFormatProvider, out double)"/>
+    /// is only the conversion. On its own it admits forms that are not CSS numbers: a thousands
+    /// separator under <see cref="NumberStyles.Number"/> (so <c>1,5px</c> read as <c>15px</c>), no
+    /// exponent under that style (so <c>1e2px</c> was rejected), and under any style a trailing dot,
+    /// <c>NaN</c> and <c>Infinity</c>.
+    /// </remarks>
+    internal static bool TryParseCssNumber(ReadOnlySpan<char> text, out double value)
+    {
+        value = 0;
+        text = text.Trim();
+        var index = 0;
+        if (index < text.Length && text[index] is '+' or '-')
+            index++;
+
+        var integerDigits = CountAsciiDigits(text, ref index);
+        var fractionDigits = 0;
+        if (index < text.Length && text[index] == '.')
+        {
+            index++;
+            fractionDigits = CountAsciiDigits(text, ref index);
+            if (fractionDigits == 0)
+                return false;
+        }
+
+        if (integerDigits == 0 && fractionDigits == 0)
+            return false;
+
+        if (index < text.Length && text[index] is 'e' or 'E')
+        {
+            index++;
+            if (index < text.Length && text[index] is '+' or '-')
+                index++;
+            if (CountAsciiDigits(text, ref index) == 0)
+                return false;
+        }
+
+        return index == text.Length
+            && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static int CountAsciiDigits(ReadOnlySpan<char> text, ref int index)
+    {
+        var start = index;
+        while (index < text.Length && char.IsAsciiDigit(text[index]))
+            index++;
+        return index - start;
+    }
 
     /// <summary>
     /// Unwraps a length value that is a single-argument <c>calc()</c>/<c>min()</c>/<c>max()</c>

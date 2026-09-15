@@ -35,7 +35,7 @@ public sealed class CssLength
         //If no units, has error
         if (length.Length < 3)
         {
-            _ = double.TryParse(length, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number);
+            _ = CssLengthParser.TryParseCssNumber(length, out _number);
             HasError = true;
             return;
         }
@@ -57,7 +57,7 @@ public sealed class CssLength
         // small/large/dynamic viewport variants canonicalise to something shorter
         // (svmin → vmin), so unit.Length would leave the prefix on the number.
         string number = length[..^unitLength];
-        if (!double.TryParse(number, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number))
+        if (!CssLengthParser.TryParseCssNumber(number, out _number))
             HasError = true;
     }
 
