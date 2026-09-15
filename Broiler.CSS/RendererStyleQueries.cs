@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -206,7 +207,7 @@ public static class RendererStyleQueries
                 {
                     var values = declaration.Value.Text
                         .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(static part => int.TryParse(part, out var value) ? (int?)value : null)
+                        .Select(static part => int.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? (int?)value : null)
                         .Where(static value => value.HasValue)
                         .Select(static value => value!.Value)
                         .ToArray();

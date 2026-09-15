@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using Broiler.Dom;
@@ -405,7 +406,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         ApplyBorderShorthandResets(computed);
 
         // 5. Relative font-weight keywords need the inherited numeric weight.
-        var parentWeight = parentProps != null && parentProps.TryGetValue("font-weight", out var pw) && int.TryParse(pw, out var pwn)
+        var parentWeight = parentProps != null && parentProps.TryGetValue("font-weight", out var pw) && int.TryParse(pw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pwn)
             ? pwn
             : 400;
         ResolveFontWeightKeywords(computed, parentWeight);
@@ -551,7 +552,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         ResolveLengthAttrFunctions(computed, element);
 
         // 6. Relative font-weight keywords need the inherited numeric weight.
-        var parentWeight = parentProps != null && parentProps.TryGetValue("font-weight", out var pw) && int.TryParse(pw, out var pwn)
+        var parentWeight = parentProps != null && parentProps.TryGetValue("font-weight", out var pw) && int.TryParse(pw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pwn)
             ? pwn
             : 400;
         ResolveFontWeightKeywords(computed, parentWeight);

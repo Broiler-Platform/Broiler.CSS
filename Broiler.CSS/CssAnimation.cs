@@ -27,7 +27,7 @@ public static class CssAnimation
         seconds = 0;
         var lower = text.Trim().ToLowerInvariant();
 
-        if (lower.EndsWith("ms"))
+        if (lower.EndsWith("ms", StringComparison.Ordinal))
         {
             if (double.TryParse(lower.AsSpan(0, lower.Length - 2),
                 NumberStyles.Float, CultureInfo.InvariantCulture, out var ms))

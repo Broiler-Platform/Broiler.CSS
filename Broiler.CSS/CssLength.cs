@@ -35,7 +35,7 @@ public sealed class CssLength
         //If no units, has error
         if (length.Length < 3)
         {
-            _ = double.TryParse(length, out _number);
+            _ = double.TryParse(length, NumberStyles.Number, NumberFormatInfo.InvariantInfo, out _number);
             HasError = true;
             return;
         }
@@ -133,7 +133,7 @@ public sealed class CssLength
         }
         else if (IsPercentage)
         {
-            return $"{Number}%";
+            return string.Create(CultureInfo.InvariantCulture, $"{Number}%");
         }
         else
         {
@@ -196,7 +196,7 @@ public sealed class CssLength
                     break;
             }
 
-            return $"{Number:0.0}{u}".Replace(',', '.');
+            return string.Create(CultureInfo.InvariantCulture, $"{Number:0.0}{u}");
         }
     }
 }
