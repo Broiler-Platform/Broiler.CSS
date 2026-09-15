@@ -1,3 +1,4 @@
+using System.Globalization;
 using Broiler.Dom;
 
 namespace Broiler.CSS.Dom.Tests;
@@ -736,6 +737,42 @@ public sealed class CssStyleEngineTests
 
         Assert.Equal("700", engine.GetComputedStyle(parent).GetPropertyValue("font-weight"));
         Assert.Equal("900", engine.GetComputedStyle(child).GetPropertyValue("font-weight"));
+    }
+
+    /// <summary>
+    /// Every boundary of the CSS Fonts 4 §2.2 relative-weight table, for both keywords. Below 100
+    /// <c>lighter</c> leaves the weight unchanged, and from 900 up so does <c>bolder</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(50, 400, 50)]
+    [InlineData(100, 400, 100)]
+    [InlineData(349, 400, 100)]
+    [InlineData(350, 700, 100)]
+    [InlineData(549, 700, 100)]
+    [InlineData(550, 900, 400)]
+    [InlineData(749, 900, 400)]
+    [InlineData(750, 900, 700)]
+    [InlineData(899, 900, 700)]
+    [InlineData(900, 900, 700)]
+    [InlineData(950, 950, 700)]
+    public void Relative_Font_Weight_Follows_The_Css_Fonts_Table(int inherited, int bolder, int lighter)
+    {
+        var (_, _, body) = NewDocument();
+        var parent = body.OwnerDocument.CreateElement("div");
+        parent.ClassName = "p";
+        var bolderChild = body.OwnerDocument.CreateElement("span");
+        bolderChild.ClassName = "b";
+        var lighterChild = body.OwnerDocument.CreateElement("span");
+        lighterChild.ClassName = "l";
+        body.AppendChild(parent);
+        parent.AppendChild(bolderChild);
+        parent.AppendChild(lighterChild);
+
+        var engine = EngineWith($".p {{ font-weight: {inherited}; }} .b {{ font-weight: bolder; }} .l {{ font-weight: lighter; }}");
+
+        Assert.Equal(inherited.ToString(CultureInfo.InvariantCulture), engine.GetComputedStyle(parent).GetPropertyValue("font-weight"));
+        Assert.Equal(bolder.ToString(CultureInfo.InvariantCulture), engine.GetComputedStyle(bolderChild).GetPropertyValue("font-weight"));
+        Assert.Equal(lighter.ToString(CultureInfo.InvariantCulture), engine.GetComputedStyle(lighterChild).GetPropertyValue("font-weight"));
     }
 
     [Theory]
