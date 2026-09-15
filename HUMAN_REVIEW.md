@@ -12,7 +12,7 @@
 - **Scope:** CSS syntax, rules, selectors, declarations, values, diagnostics, parsing,
   serialization, and DOM-facing CSS assemblies (`Broiler.CSS`, `Broiler.CSS.Dom`).
 - **Release:** Next preview (`0.1.0-preview.N`; the Publish workflow selects `N`)
-- **Commit:** `6d4b31e32c7a65a97c7acdb3ce9c44f9e0a62407`
+- **Commit:** `e937610d375610011752a015ee39376d75e6488b`
 - **Previously reviewed commit:** `44e5444cc29555e7112c2a2c06e5dcc0c661be5d`
 - **Reviewer:** _to be completed by the human reviewer_
 - **Reviewer handle:** _to be completed_
@@ -25,8 +25,8 @@ change after the commit above requires renewed review.
 
 ## Changes since the previously reviewed commit
 
-`git log 44e5444..6d4b31e` has 147 commits; `git diff --shortstat 44e5444 6d4b31e`
-reports 95 files changed, 16,126 insertions and 4,265 deletions, including tests and
+`git log 44e5444..e937610` has 151 commits; `git diff --shortstat 44e5444 e937610`
+reports 95 files changed, 16,246 insertions and 4,270 deletions, including tests and
 documentation. The themes below come from the recent first-parent history. They are not
 a substitute for reviewing the diff.
 
@@ -54,6 +54,8 @@ a substitute for reviewing the diff.
   - paged media (`c9d4f92`)
   - the `@supports` evaluator for `CSS.supports()` (`8be7a65`)
   - escape and invalid-declaration handling (`e851c08`, `3829101`)
+  - `font-weight: bolder`/`lighter` resolved by the CSS Fonts 4 relative-weight table
+    (#36)
 - **Concurrency and performance:** sharded style-engine memo caches and a memoized
   cascade projection (`c3d5a73`), and the cascade rule index (#27).
 - **Public API:**
@@ -75,7 +77,7 @@ review, not its result; the reviewer confirms it by ticking the checklist.
 
 ### Assembled evidence
 
-- **CI:** `CI` run 34936020201 on the target commit passed on `ubuntu-latest` and
+- **CI:** `CI` run 34938192314 on the target commit passed on `ubuntu-latest` and
   `windows-latest`. It covered the Release build, `eng/run-tests.ps1`, and package pack
   and verification, restoring the published `Broiler.Dom 0.1.0-preview.2` from GitHub
   Packages.
@@ -85,7 +87,7 @@ review, not its result; the reviewer confirms it by ticking the checklist.
   - `dotnet build Broiler.CSS.slnx -c Release --no-incremental`: 0 warnings, 0 errors.
   - `Broiler.CSS.Tests`: 340 passed, 0 failed, 1 skipped (a corpus that is not in this
     repository).
-  - `Broiler.CSS.Dom.Tests`: 431 passed, 0 failed, 0 skipped.
+  - `Broiler.CSS.Dom.Tests`: 442 passed, 0 failed, 0 skipped.
 - **Runtime dependencies:** `Broiler.CSS` has no project or package references.
   `Broiler.CSS.Dom` references `Broiler.CSS` and the `Broiler.Dom` package only.
 - **Security-sensitive API sweep (production code):** no file-system, process,
@@ -120,8 +122,6 @@ dotnet build .\Broiler.CSS.slnx -c Release
 - **Stale cache results under concurrency:** the style engine can keep stale results
   after a concurrent stylesheet invalidation. `GetRegistrations` publishes with `??=` and
   no generation check, and the `_cache`/`_sparseCache` stores are unguarded.
-- **Font-weight resolution:** `font-weight: lighter`/`bolder` does not follow the
-  CSS Fonts 4 table (`ResolveLighterWeight`, `ResolveBolderWeight`).
 - **Surrogate escapes:** `RendererStyleQueries.UnescapeIdentifier`, and the matcher's
   escape decoding, throw on a surrogate code point such as `\D800` instead of
   substituting U+FFFD.
