@@ -74,8 +74,12 @@ public static class RendererStyleQueries
                 continue;
             }
 
+            // CSS Syntax 3 §4.3.7: an escape for zero, a surrogate, or a value above U+10FFFF
+            // decodes to U+FFFD. ConvertFromUtf32 throws for a surrogate, so none may reach it.
             var codePoint = Convert.ToInt32(value.Substring(start, count), 16);
-            if (codePoint > 0 && codePoint <= 0x10ffff)
+            if (codePoint == 0 || codePoint is >= 0xD800 and <= 0xDFFF || codePoint > 0x10FFFF)
+                builder.Append('�');
+            else
                 builder.Append(char.ConvertFromUtf32(codePoint));
             if (index < value.Length && char.IsWhiteSpace(value[index]))
                 index++;
