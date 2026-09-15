@@ -12,7 +12,7 @@
 - **Scope:** CSS syntax, rules, selectors, declarations, values, diagnostics, parsing,
   serialization, and DOM-facing CSS assemblies (`Broiler.CSS`, `Broiler.CSS.Dom`).
 - **Release:** Next preview (`0.1.0-preview.N`; the Publish workflow selects `N`)
-- **Commit:** `efb0240d8d579fe075996ccc5553cd20e00c6a2b`
+- **Commit:** `cba970533632c81368d8949f90d0bfbf3baf42a4`
 - **Previously reviewed commit:** `44e5444cc29555e7112c2a2c06e5dcc0c661be5d`
 - **Reviewer:** _to be completed by the human reviewer_
 - **Reviewer handle:** _to be completed_
@@ -25,8 +25,8 @@ change after the commit above requires renewed review.
 
 ## Changes since the previously reviewed commit
 
-`git log 44e5444..efb0240` has 159 commits; `git diff --shortstat 44e5444 efb0240`
-reports 97 files changed, 16,398 insertions and 4,273 deletions, including tests and
+`git log 44e5444..cba9705` has 163 commits; `git diff --shortstat 44e5444 cba9705`
+reports 99 files changed, 16,522 insertions and 4,277 deletions, including tests and
 documentation. The themes below come from the recent first-parent history. They are not
 a substitute for reviewing the diff.
 
@@ -58,6 +58,8 @@ a substitute for reviewing the diff.
     (#36)
   - an escape for zero, a surrogate, or a value above U+10FFFF decoding to U+FFFD instead
     of throwing, in `@font-face` family names and in selectors (#40)
+  - CSS numbers parsed and formatted with the invariant culture, and unit suffixes
+    matched ordinally, whatever the host's locale (#42)
 - **Concurrency and performance:** sharded style-engine memo caches and a memoized
   cascade projection (`c3d5a73`), the cascade rule index (#27), and every memo store
   publishing through the cache-generation guard, so a result computed across an
@@ -81,7 +83,7 @@ review, not its result; the reviewer confirms it by ticking the checklist.
 
 ### Assembled evidence
 
-- **CI:** `CI` run 34939926544 on the target commit passed on `ubuntu-latest` and
+- **CI:** `CI` run 34942200642 on the target commit passed on `ubuntu-latest` and
   `windows-latest`. It covered the Release build, `eng/run-tests.ps1`, and package pack
   and verification, restoring the published `Broiler.Dom 0.1.0-preview.2` from GitHub
   Packages.
@@ -90,9 +92,9 @@ review, not its result; the reviewer confirms it by ticking the checklist.
   file), built against `Broiler.Dom 0.1.0-preview.2` packed from the identical Broiler.DOM
   source.
   - `dotnet build Broiler.CSS.slnx -c Release --no-incremental`: 0 warnings, 0 errors.
-  - `Broiler.CSS.Tests`: 349 passed, 0 failed, 1 skipped (a corpus that is not in this
+  - `Broiler.CSS.Tests`: 352 passed, 0 failed, 1 skipped (a corpus that is not in this
     repository).
-  - `Broiler.CSS.Dom.Tests`: 450 passed, 0 failed, 0 skipped.
+  - `Broiler.CSS.Dom.Tests`: 451 passed, 0 failed, 0 skipped.
 - **Runtime dependencies:** `Broiler.CSS` has no project or package references.
   `Broiler.CSS.Dom` references `Broiler.CSS` and the `Broiler.Dom` package only.
 - **Security-sensitive API sweep (production code):** no file-system, process,
@@ -124,8 +126,10 @@ dotnet build .\Broiler.CSS.slnx -c Release
 
 ### Open items from an AI-assisted code review (2026-09-14), not yet confirmed by the reviewer
 
-- **Culture-sensitive numbers:** some number parsing and formatting in `CssLength` and
-  `CssLengthParser` does not use the invariant culture.
+- **CSS number forms (found 2026-09-15):** the unit-suffixed fallback in
+  `CssLengthParser.IsValidLength`, and `CssLength`, parse with `NumberStyles.Number`, which
+  admits a thousands separator and no exponent. In every culture `1,5px` reads as `15px`
+  and `1e2px` is rejected, although CSS numbers allow an exponent and no separator.
 - **Shared dictionary behind a "fresh" contract:** `GetSparseComputedStyle` is
   documented as returning a fresh, caller-owned map, but can return the shared cached
   dictionary.
