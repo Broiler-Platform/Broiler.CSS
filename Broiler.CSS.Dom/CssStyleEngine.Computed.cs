@@ -88,7 +88,7 @@ public sealed partial class CssStyleEngine
     // ---- Custom-property resolution ---------------------------------------
 
     private void MergeResolvedCustomProperties(Dictionary<string, string> computed, DomElement element,
-        Dictionary<string, CustomPropertyRegistration> registrations, HashSet<DomElement> ancestorsInProgress)
+        Dictionary<string, CustomPropertyRegistration> registrations)
     {
         var explicitCustomProperties = computed
             .Where(kv => kv.Key.StartsWith("--", StringComparison.Ordinal))
@@ -315,7 +315,7 @@ public sealed partial class CssStyleEngine
             return;
 
         string writingMode = computed.GetValueOrDefault("writing-mode") ?? "horizontal-tb";
-        bool vertical = IsVerticalWritingMode(writingMode);
+        bool vertical = CssWritingMode.IsVertical(writingMode);
 
         double logicalInlineSize = 60;
         double logicalBlockSize = 20;
@@ -340,7 +340,7 @@ public sealed partial class CssStyleEngine
                     case "reset":
                         logicalInlineSize = 72;
                         logicalBlockSize = 20;
-                        ApplyButtonLikeMultilineSizing(ref logicalInlineSize, ref logicalBlockSize, Attr(element, "value"));
+                        ApplyButtonLikeMultilineSizing(ref logicalBlockSize, Attr(element, "value"));
                         break;
                     default:
                         logicalInlineSize = 173;
@@ -351,7 +351,7 @@ public sealed partial class CssStyleEngine
             case "button":
                 logicalInlineSize = 72;
                 logicalBlockSize = 20;
-                ApplyButtonLikeMultilineSizing(ref logicalInlineSize, ref logicalBlockSize, GetElementRenderedText(element));
+                ApplyButtonLikeMultilineSizing(ref logicalBlockSize, GetElementRenderedText(element));
                 break;
             case "select":
                 logicalInlineSize = 60;
@@ -378,7 +378,7 @@ public sealed partial class CssStyleEngine
             computed["height"] = FormatPx(physicalHeight);
     }
 
-    private static void ApplyButtonLikeMultilineSizing(ref double logicalInlineSize, ref double logicalBlockSize, string? rawText)
+    private static void ApplyButtonLikeMultilineSizing(ref double logicalBlockSize, string? rawText)
     {
         int lineCount = CountRenderedLines(rawText);
         if (lineCount <= 1)
@@ -463,7 +463,7 @@ public sealed partial class CssStyleEngine
     private static void ApplyLogicalSizeAliases(Dictionary<string, string> computed)
     {
         string writingMode = computed.GetValueOrDefault("writing-mode") ?? "horizontal-tb";
-        bool vertical = IsVerticalWritingMode(writingMode);
+        bool vertical = CssWritingMode.IsVertical(writingMode);
 
         string width = computed.GetValueOrDefault("width") ?? "auto";
         string height = computed.GetValueOrDefault("height") ?? "auto";
@@ -484,12 +484,6 @@ public sealed partial class CssStyleEngine
 
     private static string ResolveLogicalPhysicalFallback(string currentPhysicalValue, string mappedLogicalValue) =>
         HasExplicitSpecifiedSize(mappedLogicalValue) ? mappedLogicalValue : currentPhysicalValue;
-
-    private static bool IsVerticalWritingMode(string? writingMode)
-    {
-        var normalized = writingMode?.Trim().ToLowerInvariant();
-        return normalized is "vertical-rl" or "vertical-lr" or "sideways-rl" or "sideways-lr";
-    }
 
     private static bool HasExplicitSpecifiedSize(string? value)
     {

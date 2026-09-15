@@ -408,7 +408,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         CollectCascadedDeclarations(element, pseudoElement, computed, includeInlineStyle);
 
         // 2. Custom properties: inheritance, registered defaults, var().
-        MergeResolvedCustomProperties(computed, element, registrations, ancestorsInProgress);
+        MergeResolvedCustomProperties(computed, element, registrations);
         ResolveKnownCustomProperties(computed);
 
         // 3. CSS-wide keywords (initial/unset/revert resolved; inherit preserved here).
@@ -561,7 +561,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         CollectCascadedDeclarations(element, pseudoElement, computed, includeInlineStyle: true);
 
         // 3. Custom properties: resolve inheritance, registered defaults, and var().
-        MergeResolvedCustomProperties(computed, element, registrations, ancestorsInProgress);
+        MergeResolvedCustomProperties(computed, element, registrations);
         ResolveKnownCustomProperties(computed);
 
         // 4. CSS-wide keywords (initial / unset / revert; inherit preserved).

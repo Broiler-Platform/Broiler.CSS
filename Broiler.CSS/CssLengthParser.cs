@@ -1219,13 +1219,7 @@ public static class CssLengthParser
     /// substring/unit-matching logic, also consumed by <see cref="CssLength"/>).
     /// Returns the canonical unit
     /// string and sets <paramref name="hasUnit"/>; falls back to
-    /// <paramref name="defaultUnit"/> when no unit is present.
-    /// </summary>
-    internal static string GetUnit(string length, string? defaultUnit, out bool hasUnit) =>
-        GetUnit(length, defaultUnit, out hasUnit, out _);
-
-    /// <summary>
-    /// As <see cref="GetUnit(string, string, out bool)"/>, but also reports how
+    /// <paramref name="defaultUnit"/> when no unit is present, and reports how
     /// many characters the unit occupied <em>as written</em>.
     /// <para>
     /// The two can differ: the small/large/dynamic viewport variants canonicalise
