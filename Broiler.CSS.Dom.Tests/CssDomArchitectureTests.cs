@@ -26,12 +26,12 @@ public sealed class CssDomArchitectureTests
         var assembly = typeof(CssSelectorMatcher).Assembly;
         var forbidden = assembly.GetExportedTypes()
             .SelectMany(GetMemberTypes)
-            .Where(static type => type.Namespace is not null)
             .Where(static type =>
-                type.Namespace.StartsWith("Broiler.HtmlBridge", StringComparison.Ordinal) ||
-                type.Namespace.StartsWith("Broiler.HTML", StringComparison.Ordinal) ||
-                type.Namespace.StartsWith("Broiler.JavaScript", StringComparison.Ordinal) ||
-                type.Namespace.StartsWith("Broiler.Graphics", StringComparison.Ordinal))
+                type.Namespace is { } ns &&
+                (ns.StartsWith("Broiler.HtmlBridge", StringComparison.Ordinal) ||
+                 ns.StartsWith("Broiler.HTML", StringComparison.Ordinal) ||
+                 ns.StartsWith("Broiler.JavaScript", StringComparison.Ordinal) ||
+                 ns.StartsWith("Broiler.Graphics", StringComparison.Ordinal)))
             .Distinct()
             .ToArray();
 
