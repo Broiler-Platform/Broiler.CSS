@@ -12,7 +12,7 @@
 - **Scope:** CSS syntax, rules, selectors, declarations, values, diagnostics, parsing,
   serialization, and DOM-facing CSS assemblies (`Broiler.CSS`, `Broiler.CSS.Dom`).
 - **Release:** Next preview (`0.1.0-preview.N`; the Publish workflow selects `N`)
-- **Commit:** `4450020df070d37198eccabca8411c2a1bf11c8e`
+- **Commit:** `26724b8ba9e93dbae643d093f6145aa6207570aa`
 - **Previously reviewed commit:** `44e5444cc29555e7112c2a2c06e5dcc0c661be5d`
 - **Reviewer:** _to be completed by the human reviewer_
 - **Reviewer handle:** _to be completed_
@@ -25,8 +25,8 @@ change after the commit above requires renewed review.
 
 ## Changes since the previously reviewed commit
 
-`git log 44e5444..4450020` has 167 commits; `git diff --shortstat 44e5444 4450020`
-reports 101 files changed, 16,701 insertions and 4,277 deletions, including tests and
+`git log 44e5444..26724b8` has 171 commits; `git diff --shortstat 44e5444 26724b8`
+reports 102 files changed, 16,768 insertions and 4,277 deletions, including tests and
 documentation. The themes below come from the recent first-parent history. They are not
 a substitute for reviewing the diff.
 
@@ -70,6 +70,8 @@ a substitute for reviewing the diff.
 - **Public API:**
   - read-only `@position-try` and `@font-feature-values` maps (#29, #30)
   - `CssStyleRule.Range` and `CssAtRule.Range` (#33)
+  - `GetSparseComputedStyle` returning a fresh, caller-owned map as documented, instead of
+    the engine's cached sparse map or a shared empty map (#46)
 - **Build hygiene:** all compiler warnings fixed (#33, #34), and xUnit `Timeout`
   removed from synchronous tests after the test-package update (#33).
 
@@ -86,17 +88,18 @@ review, not its result; the reviewer confirms it by ticking the checklist.
 
 ### Assembled evidence
 
-- **CI:** `CI` run 34943601717 on the target commit passed on `ubuntu-latest` and
+- **CI:** `CI` run 34944333174 on the target commit passed on `ubuntu-latest` and
   `windows-latest`. It covered the Release build, `eng/run-tests.ps1`, and package pack
   and verification, restoring the published `Broiler.Dom 0.1.0-preview.2` from GitHub
   Packages.
 - **Local build and tests:** run on 2026-09-15 on Windows with .NET SDK 10.0.400. The
-  tree was identical to the target commit, built against `Broiler.Dom 0.1.0-preview.2`
-  packed from the identical Broiler.DOM source.
+  source was identical to the target commit (the tested tree differs from it only in this
+  file), built against `Broiler.Dom 0.1.0-preview.2` packed from the identical Broiler.DOM
+  source.
   - `dotnet build Broiler.CSS.slnx -c Release --no-incremental`: 0 warnings, 0 errors.
   - `Broiler.CSS.Tests`: 399 passed, 0 failed, 1 skipped (a corpus that is not in this
     repository).
-  - `Broiler.CSS.Dom.Tests`: 451 passed, 0 failed, 0 skipped.
+  - `Broiler.CSS.Dom.Tests`: 454 passed, 0 failed, 0 skipped.
 - **Runtime dependencies:** `Broiler.CSS` has no project or package references.
   `Broiler.CSS.Dom` references `Broiler.CSS` and the `Broiler.Dom` package only.
 - **Security-sensitive API sweep (production code):** no file-system, process,
@@ -128,9 +131,6 @@ dotnet build .\Broiler.CSS.slnx -c Release
 
 ### Open items from an AI-assisted code review (2026-09-14), not yet confirmed by the reviewer
 
-- **Shared dictionary behind a "fresh" contract:** `GetSparseComputedStyle` is
-  documented as returning a fresh, caller-owned map, but can return the shared cached
-  dictionary.
 - **Per-thread state in shared caches:** the per-thread quirks-mode and paged-media
   state influences caches shared by all threads.
 - **Duplication and dead code:** duplicated top-level scanners and unit tables, and
