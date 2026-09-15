@@ -807,7 +807,13 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             }
             if (digits > 0)
             {
-                result.Append(char.ConvertFromUtf32(int.Parse(value[start..index], NumberStyles.HexNumber)));
+                // CSS Syntax 3 §4.3.7: zero, a surrogate, or a value above U+10FFFF decodes to
+                // U+FFFD. ConvertFromUtf32 throws for the last two, so neither may reach it.
+                var codePoint = int.Parse(value[start..index], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+                if (codePoint == 0 || codePoint is >= 0xD800 and <= 0xDFFF || codePoint > 0x10FFFF)
+                    result.Append('�');
+                else
+                    result.Append(char.ConvertFromUtf32(codePoint));
                 if (index < value.Length && char.IsWhiteSpace(value[index])) index++;
             }
             else if (index < value.Length)
