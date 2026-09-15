@@ -142,6 +142,69 @@ public sealed class CssStyleEngineConcurrencyTests
         GC.KeepAlive(parallelDocument);
     }
 
+    /// <summary>
+    /// A result computed across an invalidation must not be memoized, on any of the engine's cache
+    /// paths. The cascade reads inline style through the host's provider in the middle of a
+    /// computation, and a host that re-syncs its stylesheets from there invalidates the engine while
+    /// the result is still in flight — the single-threaded form of the race in which another thread
+    /// adds a sheet between a computation's start and its store.
+    /// </summary>
+    /// <remarks>
+    /// Before the fix, the computed-style, ancestor and sparse paths stored that stale result
+    /// unguarded, so every later query kept answering from the sheets that had just been replaced.
+    /// The cascaded path was already guarded and is the control.
+    /// </remarks>
+    [Theory]
+    [InlineData("computed")]
+    [InlineData("computed-ancestor")]
+    [InlineData("sparse")]
+    [InlineData("cascaded")]
+    public void A_Result_Computed_Across_An_Invalidation_Is_Not_Cached(string path)
+    {
+        var document = new DomDocument();
+        var html = document.CreateElement("html");
+        var body = document.CreateElement("body");
+        var child = document.CreateElement("div");
+        document.AppendChild(html);
+        html.AppendChild(body);
+        body.AppendChild(child);
+
+        var engine = new CssStyleEngine();
+        engine.AddStyleSheet(new CssParser().ParseStyleSheet("body { color: red; }"));
+
+        var resynced = false;
+        engine.SetInlineStyleSource(element =>
+        {
+            if (!resynced && ReferenceEquals(element, body))
+            {
+                resynced = true;
+                engine.AddStyleSheet(new CssParser().ParseStyleSheet("body { color: green; }"));
+            }
+            return null;
+        });
+
+        Func<string?> bodyColor = path switch
+        {
+            "computed" => () => engine.GetComputedStyle(body).GetPropertyValue("color"),
+            // The child's computation resolves body through the ancestor recursion, which is where
+            // the invalidation lands; the stale body entry was then read back by a direct query.
+            "computed-ancestor" => () =>
+            {
+                engine.GetComputedStyle(child);
+                return engine.GetComputedStyle(body).GetPropertyValue("color");
+            },
+            "sparse" => () => engine.GetSparseComputedStyle(body, sparseInheritance: true).GetValueOrDefault("color"),
+            "cascaded" => () => engine.GetCascadedStyle(body, includeInlineStyle: true).GetValueOrDefault("color"),
+            _ => throw new ArgumentOutOfRangeException(nameof(path)),
+        };
+
+        bodyColor();
+        Assert.True(resynced);
+
+        Assert.Equal("green", bodyColor());
+        GC.KeepAlive(document);
+    }
+
     private static (DomDocument Document, List<DomElement> Elements) BuildDocument()
     {
         var document = new DomDocument();
