@@ -1432,19 +1432,25 @@ public sealed partial class CssStyleEngine
             computed["font-weight"] = ResolveLighterWeight(parentWeight).ToString(CultureInfo.InvariantCulture);
     }
 
-    private static int ResolveBolderWeight(int parentWeight)
+    // CSS Fonts 4 §2.2 "Relative Weights": the inherited weight w maps to
+    //   w < 100: bolder 400, lighter unchanged    550 ≤ w < 750: bolder 900, lighter 400
+    //   100 ≤ w < 350: bolder 400, lighter 100    750 ≤ w < 900: bolder 900, lighter 700
+    //   350 ≤ w < 550: bolder 700, lighter 100    900 ≤ w: bolder unchanged, lighter 700
+    private static int ResolveBolderWeight(int parentWeight) => parentWeight switch
     {
-        if (parentWeight < 400) return 400;
-        if (parentWeight < 600) return 700;
-        return 900;
-    }
+        < 350 => 400,
+        < 550 => 700,
+        < 900 => 900,
+        _ => parentWeight,
+    };
 
-    private static int ResolveLighterWeight(int parentWeight)
+    private static int ResolveLighterWeight(int parentWeight) => parentWeight switch
     {
-        if (parentWeight > 700) return 400;
-        if (parentWeight > 500) return 400;
-        return 100;
-    }
+        < 100 => parentWeight,
+        < 550 => 100,
+        < 750 => 400,
+        _ => 700,
+    };
 
     // ---- Media queries -----------------------------------------------------
 
