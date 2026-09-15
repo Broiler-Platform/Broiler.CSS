@@ -28,17 +28,21 @@ public sealed partial class CssStyleEngine
 
     private Dictionary<string, CustomPropertyRegistration> CollectCustomPropertyRegistrations()
     {
-        // Snapshot the memo and the sheet list together (see the _sync note in the primary partial):
-        // _sheets is mutated from other threads, so a live foreach here can corrupt/abort under the
-        // same race as the cascade. Compute outside the lock, then publish with a double-checked
-        // store so a concurrent computation's instance is reused rather than replaced — callers get
-        // a stable identity for a given generation.
+        // Snapshot the memo, the sheet list and the cache generation together (see the _sync note in
+        // the primary partial): _sheets is mutated from other threads, so a live foreach here can
+        // corrupt/abort under the same race as the cascade. Compute outside the lock, then publish
+        // with a double-checked store so a concurrent computation's instance is reused rather than
+        // replaced — callers get a stable identity for a given generation. A collection that raced
+        // an InvalidateAll was built from the old sheets, so it is returned without being published:
+        // storing it would undo the reset InvalidateAll just made.
         StyleSheetEntry[] sheetsSnapshot;
+        int generation;
         lock (_sync)
         {
             if (_registrations is not null)
                 return _registrations;
             sheetsSnapshot = [.. _sheets];
+            generation = _cacheGeneration;
         }
 
         var registrations = new Dictionary<string, CustomPropertyRegistration>(StringComparer.OrdinalIgnoreCase);
@@ -46,7 +50,11 @@ public sealed partial class CssStyleEngine
             CollectPropertyRules(entry.Sheet.Rules, registrations);
 
         lock (_sync)
+        {
+            if (generation != _cacheGeneration)
+                return registrations;
             return _registrations ??= registrations;
+        }
     }
 
     private static void CollectPropertyRules(IReadOnlyList<CssRule> rules, Dictionary<string, CustomPropertyRegistration> registrations)

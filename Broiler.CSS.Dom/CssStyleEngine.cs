@@ -207,11 +207,12 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
 
         // Computed outside any lock: ComputeStyle re-enters the host (selector matching → DOM
         // bridge) which may mutate this engine's stylesheets, and it recurses into the ancestor
-        // chain. A benign race where two threads compute the same key both store a valid snapshot
-        // (last writer wins); it never corrupts the cache.
-        var computed = ComputeStyle(element, normalizedPseudo, []);
-        var snapshot = new CssComputedStyle(computed);
-        _cache[key] = snapshot;
+        // chain. Two threads computing the same key for the same generation store equal snapshots
+        // (last writer wins). A computation that raced an invalidation is returned but not stored:
+        // stored, it would outlive the InvalidateAll that should have discarded it.
+        var generation = CaptureCacheGeneration();
+        var snapshot = new CssComputedStyle(ComputeStyle(element, normalizedPseudo, []));
+        StoreIfCurrent(_cache, key, snapshot, generation);
         return snapshot;
     }
 
@@ -320,26 +321,39 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         if (_cascadedStyleCache.TryGetValue(key, out var cached))
             return cached;
 
-        int generation;
-        lock (_sync)
-            generation = _cacheGeneration;
-
+        var generation = CaptureCacheGeneration();
         var computed = ComputeCascadedStyle(key.element, key.Item2, [], key.includeInlineStyle);
 
         // Same guard as GetCascadedDeclarationMap, and for the same reason: selector matching can
         // call back into the host mid-cascade and re-sync the stylesheets, so a result derived from
         // the pre-re-sync sheets must not be published.
-        lock (_sync)
-        {
-            if (generation == _cacheGeneration)
-                _cascadedStyleCache[key] = computed;
-        }
-
+        StoreIfCurrent(_cascadedStyleCache, key, computed, generation);
         return computed;
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyReadOnlyMap =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    // The generation guard every memo in this engine publishes through (see the _sync note at the
+    // top): capture _cacheGeneration before computing, and store only if no InvalidateAll ran in
+    // between. The compare and the store take _sync, the lock InvalidateAll bumps and clears under,
+    // so an invalidation lands either before the store (which then rejects the result) or after it
+    // (which then clears the entry), never between the two.
+    private int CaptureCacheGeneration()
+    {
+        lock (_sync)
+            return _cacheGeneration;
+    }
+
+    private void StoreIfCurrent<TKey, TValue>(ConcurrentDictionary<TKey, TValue> cache, TKey key, TValue value, int generation)
+        where TKey : notnull
+    {
+        lock (_sync)
+        {
+            if (generation == _cacheGeneration)
+                cache[key] = value;
+        }
+    }
 
     private Dictionary<string, string> ComputeCascadedStyle(
         DomElement element,
@@ -469,9 +483,9 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         if (_cache.TryGetValue(key, out var cached))
             return cached;
 
-        var computed = ComputeStyle(element, pseudoElement: null, ancestorsInProgress);
-        var snapshot = new CssComputedStyle(computed);
-        _cache[key] = snapshot;
+        var generation = CaptureCacheGeneration();
+        var snapshot = new CssComputedStyle(ComputeStyle(element, pseudoElement: null, ancestorsInProgress));
+        StoreIfCurrent(_cache, key, snapshot, generation);
         return snapshot;
     }
 
@@ -485,10 +499,11 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         if (_sparseCache.TryGetValue(key, out var cached))
             return cached;
 
+        var generation = CaptureCacheGeneration();
         IReadOnlyDictionary<string, string> computed = ComputeStyle(
             element, pseudoElement: null, ancestorsInProgress,
             backfillInitials: false, sparseInheritance: true);
-        _sparseCache[key] = computed;
+        StoreIfCurrent(_sparseCache, key, computed, generation);
         return computed;
     }
 
@@ -673,12 +688,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         // Only memoize when no invalidation occurred while this cascade was computed:
         // a host re-sync (see the snapshot note above) bumps the generation and clears
         // the cache, so a result derived from the pre-re-sync sheet snapshot is stale.
-        lock (_sync)
-        {
-            if (generation == _cacheGeneration)
-                _declaredCascadeCache[key] = map;
-        }
-
+        StoreIfCurrent(_declaredCascadeCache, key, map, generation);
         return map;
     }
 
