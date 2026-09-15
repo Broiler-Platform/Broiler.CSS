@@ -12,7 +12,7 @@
 - **Scope:** CSS syntax, rules, selectors, declarations, values, diagnostics, parsing,
   serialization, and DOM-facing CSS assemblies (`Broiler.CSS`, `Broiler.CSS.Dom`).
 - **Release:** Next preview (`0.1.0-preview.N`; the Publish workflow selects `N`)
-- **Commit:** `26724b8ba9e93dbae643d093f6145aa6207570aa`
+- **Commit:** `ad24a2066bcbbb60180d156f159cf13e02de4953`
 - **Previously reviewed commit:** `44e5444cc29555e7112c2a2c06e5dcc0c661be5d`
 - **Reviewer:** _to be completed by the human reviewer_
 - **Reviewer handle:** _to be completed_
@@ -25,8 +25,8 @@ change after the commit above requires renewed review.
 
 ## Changes since the previously reviewed commit
 
-`git log 44e5444..26724b8` has 171 commits; `git diff --shortstat 44e5444 26724b8`
-reports 102 files changed, 16,768 insertions and 4,277 deletions, including tests and
+`git log 44e5444..ad24a20` has 175 commits; `git diff --shortstat 44e5444 ad24a20`
+reports 103 files changed, 16,979 insertions and 4,279 deletions, including tests and
 documentation. The themes below come from the recent first-parent history. They are not
 a substitute for reviewing the diff.
 
@@ -66,7 +66,9 @@ a substitute for reviewing the diff.
 - **Concurrency and performance:** sharded style-engine memo caches and a memoized
   cascade projection (`c3d5a73`), the cascade rule index (#27), and every memo store
   publishing through the cache-generation guard, so a result computed across an
-  invalidation is no longer cached (#38).
+  invalidation is no longer cached (#38), and every memo and the rule index keyed by the
+  thread's render mode (quirks mode, paged media), so one mode's result is never served in
+  another (#48).
 - **Public API:**
   - read-only `@position-try` and `@font-feature-values` maps (#29, #30)
   - `CssStyleRule.Range` and `CssAtRule.Range` (#33)
@@ -88,18 +90,17 @@ review, not its result; the reviewer confirms it by ticking the checklist.
 
 ### Assembled evidence
 
-- **CI:** `CI` run 34944333174 on the target commit passed on `ubuntu-latest` and
+- **CI:** `CI` run 34945850700 on the target commit passed on `ubuntu-latest` and
   `windows-latest`. It covered the Release build, `eng/run-tests.ps1`, and package pack
   and verification, restoring the published `Broiler.Dom 0.1.0-preview.2` from GitHub
   Packages.
 - **Local build and tests:** run on 2026-09-15 on Windows with .NET SDK 10.0.400. The
-  source was identical to the target commit (the tested tree differs from it only in this
-  file), built against `Broiler.Dom 0.1.0-preview.2` packed from the identical Broiler.DOM
-  source.
+  tree was identical to the target commit, built against `Broiler.Dom 0.1.0-preview.2`
+  packed from the identical Broiler.DOM source.
   - `dotnet build Broiler.CSS.slnx -c Release --no-incremental`: 0 warnings, 0 errors.
   - `Broiler.CSS.Tests`: 399 passed, 0 failed, 1 skipped (a corpus that is not in this
     repository).
-  - `Broiler.CSS.Dom.Tests`: 454 passed, 0 failed, 0 skipped.
+  - `Broiler.CSS.Dom.Tests`: 468 passed, 0 failed, 0 skipped.
 - **Runtime dependencies:** `Broiler.CSS` has no project or package references.
   `Broiler.CSS.Dom` references `Broiler.CSS` and the `Broiler.Dom` package only.
 - **Security-sensitive API sweep (production code):** no file-system, process,
@@ -131,8 +132,6 @@ dotnet build .\Broiler.CSS.slnx -c Release
 
 ### Open items from an AI-assisted code review (2026-09-14), not yet confirmed by the reviewer
 
-- **Per-thread state in shared caches:** the per-thread quirks-mode and paged-media
-  state influences caches shared by all threads.
 - **Duplication and dead code:** duplicated top-level scanners and unit tables, and
   public types with no references in this repository.
 
