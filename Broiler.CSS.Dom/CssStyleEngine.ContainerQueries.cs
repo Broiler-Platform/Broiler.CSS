@@ -397,20 +397,8 @@ public sealed partial class CssStyleEngine
     /// <paramref name="open"/>, or <c>-1</c> when the parentheses never balance.</summary>
     private static int MatchParen(string text, int open)
     {
-        var depth = 0;
-        for (var i = open; i < text.Length; i++)
-        {
-            if (text[i] == '(')
-            {
-                depth++;
-            }
-            else if (text[i] == ')' && --depth == 0)
-            {
-                return i + 1;
-            }
-        }
-
-        return -1;
+        var close = FindMatchingClosingParen(text, open);
+        return close < 0 ? -1 : close + 1;
     }
 
     /// <summary>Reads the body of a <c>style(...)</c> query, or reports false when

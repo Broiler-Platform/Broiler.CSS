@@ -2367,12 +2367,12 @@ public sealed partial class CssStyleEngine
                     break;
 
                 var openParen = open + name.Length;
-                var closeParen = MatchingParenthesis(value, openParen);
+                var closeParen = FindMatchingClosingParen(value, openParen);
                 if (closeParen < 0)
                     break;
 
                 var content = value.Substring(openParen + 1, closeParen - openParen - 1);
-                foreach (var arg in SplitTopLevelCommaArguments(content))
+                foreach (var arg in CssLengthParser.SplitTopLevelArguments(content))
                 {
                     if (IsBareNumberTerm(arg))
                         return true;
@@ -2400,44 +2400,6 @@ public sealed partial class CssStyleEngine
         }
 
         return -1;
-    }
-
-    // Index of the ')' matching the '(' at <paramref name="openIndex"/>, or -1.
-    private static int MatchingParenthesis(string value, int openIndex)
-    {
-        var depth = 0;
-        for (var i = openIndex; i < value.Length; i++)
-        {
-            if (value[i] == '(')
-                depth++;
-            else if (value[i] == ')' && --depth == 0)
-                return i;
-        }
-
-        return -1;
-    }
-
-    private static List<string> SplitTopLevelCommaArguments(string content)
-    {
-        var args = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < content.Length; i++)
-        {
-            var c = content[i];
-            if (c == '(')
-                depth++;
-            else if (c == ')')
-                depth--;
-            else if (c == ',' && depth == 0)
-            {
-                args.Add(content[start..i]);
-                start = i + 1;
-            }
-        }
-
-        args.Add(content[start..]);
-        return args;
     }
 
     // A bare <number>: a finite numeric literal with no unit and no '%'. A parsed

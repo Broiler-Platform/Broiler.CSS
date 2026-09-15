@@ -2,20 +2,6 @@ using System.Globalization;
 
 namespace Broiler.CSS;
 
-public enum CssValueKind
-{
-    Empty,
-    Keyword,
-    Number,
-    Percentage,
-    Dimension,
-    Color,
-    String,
-    Url,
-    Function,
-    Custom,
-}
-
 public enum CssUnit
 {
     None,
