@@ -248,16 +248,20 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         string? pseudoElement = null,
         bool sparseInheritance = false)
     {
+        // Fresh even when empty: the shared EmptyReadOnlyMap is a Dictionary a caller that owns its
+        // result could fill, and every later null query here and in GetCascadedStyle would see it.
         if (element is null)
-            return EmptyReadOnlyMap;
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         ObserveDocument(element);
 
         // Principal-box sparse inheritance goes through the cached recursion so the ancestor
         // chain is materialised once per invalidation generation (bridge callers query many
-        // elements of the same subtree). Pseudo-elements are off this recursion.
+        // elements of the same subtree). Pseudo-elements are off this recursion. The cached map is
+        // also every descendant's inheritance source, so the caller gets a copy: handing out the
+        // cached instance let a caller that owns its result, as documented, edit later answers.
         if (sparseInheritance && pseudoElement is null)
-            return GetSparseComputedStyleInternal(element, []);
+            return new Dictionary<string, string>(GetSparseComputedStyleInternal(element, []), StringComparer.OrdinalIgnoreCase);
 
         return ComputeStyle(
             element,
