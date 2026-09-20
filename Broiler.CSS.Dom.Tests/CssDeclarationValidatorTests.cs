@@ -29,6 +29,8 @@ public sealed class CssDeclarationValidatorTests
     // CSS-wide keywords and deferred substitutions are always valid.
     [InlineData("display", "inherit", true)]
     [InlineData("display", "revert", true)]
+    [InlineData("display", "revert-layer", true)]
+    [InlineData("position", "revert-layer", true)]
     [InlineData("display", "var(--d)", true)]
     [InlineData("color", "env(safe-area-inset-top)", true)]
     // Empty / whitespace is never acceptable.

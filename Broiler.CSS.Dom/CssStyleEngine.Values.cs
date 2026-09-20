@@ -51,7 +51,7 @@ public sealed partial class CssStyleEngine
             }
 
             var lower = value.Trim().ToLowerInvariant();
-            if (lower is not ("initial" or "inherit" or "unset" or "revert"))
+            if (lower is not ("initial" or "inherit" or "unset" or "revert" or "revert-layer"))
                 continue;
 
             // Preserve "inherit" verbatim so the computed snapshot mirrors the
@@ -62,7 +62,7 @@ public sealed partial class CssStyleEngine
 
             string? replacement = lower switch
             {
-                "unset" or "revert" => IsInheritedCssProperty(key)
+                "unset" or "revert" or "revert-layer" => IsInheritedCssProperty(key)
                     ? parentProps != null && parentProps.TryGetValue(key, out var inherited)
                         ? inherited
                         : CssInitialValues.GetValueOrDefault(key)
@@ -391,7 +391,7 @@ public sealed partial class CssStyleEngine
         var v = value.Trim().ToLowerInvariant();
 
         // CSS-wide keywords are always valid.
-        if (v is "inherit" or "initial" or "unset" or "revert")
+        if (v is "inherit" or "initial" or "unset" or "revert" or "revert-layer")
             return true;
 
         // Custom-property references and env() are validated after substitution,
@@ -876,14 +876,15 @@ public sealed partial class CssStyleEngine
         if (string.IsNullOrWhiteSpace(value))
             return;
 
-        if (value.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase))
+        var whole = value.Trim().ToLowerInvariant();
+        if (whole is "inherit" or "initial" or "unset" or "revert" or "revert-layer")
         {
-            if (!computed.ContainsKey("font-style")) computed["font-style"] = "inherit";
-            if (!computed.ContainsKey("font-variant")) computed["font-variant"] = "inherit";
-            if (!computed.ContainsKey("font-weight")) computed["font-weight"] = "inherit";
-            if (!computed.ContainsKey("font-size")) computed["font-size"] = "inherit";
-            if (!computed.ContainsKey("line-height")) computed["line-height"] = "inherit";
-            if (!computed.ContainsKey("font-family")) computed["font-family"] = "inherit";
+            if (!computed.ContainsKey("font-style")) computed["font-style"] = whole;
+            if (!computed.ContainsKey("font-variant")) computed["font-variant"] = whole;
+            if (!computed.ContainsKey("font-weight")) computed["font-weight"] = whole;
+            if (!computed.ContainsKey("font-size")) computed["font-size"] = whole;
+            if (!computed.ContainsKey("line-height")) computed["line-height"] = whole;
+            if (!computed.ContainsKey("font-family")) computed["font-family"] = whole;
             return;
         }
 
@@ -1122,6 +1123,18 @@ public sealed partial class CssStyleEngine
 
     private static void ExpandBorderShorthand(IDictionary<string, string> computed, string value)
     {
+        var whole = value.Trim().ToLowerInvariant();
+        if (whole is "inherit" or "initial" or "unset" or "revert" or "revert-layer")
+        {
+            if (!computed.ContainsKey("border-width")) computed["border-width"] = whole;
+            if (!computed.ContainsKey("border-style")) computed["border-style"] = whole;
+            if (!computed.ContainsKey("border-color")) computed["border-color"] = whole;
+            ExpandBoxShorthand(computed, whole, "border-top-width", "border-right-width", "border-bottom-width", "border-left-width");
+            ExpandBoxShorthand(computed, whole, "border-top-style", "border-right-style", "border-bottom-style", "border-left-style");
+            ExpandBoxShorthand(computed, whole, "border-top-color", "border-right-color", "border-bottom-color", "border-left-color");
+            return;
+        }
+
         var (width, style, color) = ResolveBorderComponents(value);
 
         if (!computed.ContainsKey("border-width")) computed["border-width"] = width;
@@ -1140,6 +1153,15 @@ public sealed partial class CssStyleEngine
     /// </summary>
     private static void ExpandOutlineShorthand(IDictionary<string, string> computed, string value)
     {
+        var whole = value.Trim().ToLowerInvariant();
+        if (whole is "inherit" or "initial" or "unset" or "revert" or "revert-layer")
+        {
+            if (!computed.ContainsKey("outline-width")) computed["outline-width"] = whole;
+            if (!computed.ContainsKey("outline-style")) computed["outline-style"] = whole;
+            if (!computed.ContainsKey("outline-color")) computed["outline-color"] = whole;
+            return;
+        }
+
         var parts = SplitCssValues(value);
         string? width = null, style = null, color = null;
 
@@ -1162,6 +1184,18 @@ public sealed partial class CssStyleEngine
 
     private static void ExpandBorderSideShorthand(IDictionary<string, string> computed, string value, string side)
     {
+        var whole = value.Trim().ToLowerInvariant();
+        if (whole is "inherit" or "initial" or "unset" or "revert" or "revert-layer")
+        {
+            if (!computed.ContainsKey($"border-{side}-width"))
+                computed[$"border-{side}-width"] = whole;
+            if (!computed.ContainsKey($"border-{side}-style"))
+                computed[$"border-{side}-style"] = whole;
+            if (!computed.ContainsKey($"border-{side}-color"))
+                computed[$"border-{side}-color"] = whole;
+            return;
+        }
+
         var (width, style, color) = ResolveBorderComponents(value);
 
         if (!computed.ContainsKey($"border-{side}-width"))
@@ -1197,7 +1231,7 @@ public sealed partial class CssStyleEngine
         // `transparent`, so an author `background: inherit` never inherited the parent's colour.
         // Kept verbatim like a longhand CSS-wide keyword; the renderer resolves it against the parent.
         var whole = value.Trim().ToLowerInvariant();
-        if (whole is "inherit" or "initial" or "unset" or "revert")
+        if (whole is "inherit" or "initial" or "unset" or "revert" or "revert-layer")
         {
             foreach (var longhand in BackgroundLonghandProperties)
                 if (!computed.ContainsKey(longhand))

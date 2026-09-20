@@ -58,26 +58,32 @@ internal sealed class CssCascadeRuleIndex
     internal readonly record struct Entry(
         CssStyleRule Rule,
         CssOrigin Origin,
-        CssAtRule[]? ContainerConditions);
+        CssAtRule[]? ContainerConditions,
+        int LayerIndex);
+
+    private static readonly CssCascadeLayerOrder EmptyLayerOrder = new();
 
     private readonly Entry[] _entries;
     private readonly Dictionary<string, List<int>> _byId;
     private readonly Dictionary<string, List<int>> _byClass;
     private readonly Dictionary<string, List<int>> _byType;
     private readonly List<int> _universal;
+    private readonly Dictionary<CssOrigin, CssCascadeLayerOrder> _layerOrders;
 
     private CssCascadeRuleIndex(
         Entry[] entries,
         Dictionary<string, List<int>> byId,
         Dictionary<string, List<int>> byClass,
         Dictionary<string, List<int>> byType,
-        List<int> universal)
+        List<int> universal,
+        Dictionary<CssOrigin, CssCascadeLayerOrder> layerOrders)
     {
         _entries = entries;
         _byId = byId;
         _byClass = byClass;
         _byType = byType;
         _universal = universal;
+        _layerOrders = layerOrders;
     }
 
     /// <summary>Total style rules in the index, after conditional-group filtering.</summary>
@@ -85,6 +91,10 @@ internal sealed class CssCascadeRuleIndex
 
     /// <summary>Rules no key could narrow, which every element has to test.</summary>
     internal int UniversalRuleCount => _universal.Count;
+
+    /// <summary>The layer order registry for the given origin.</summary>
+    internal CssCascadeLayerOrder GetLayerOrder(CssOrigin origin = CssOrigin.Author) =>
+        _layerOrders.TryGetValue(origin, out var order) ? order : EmptyLayerOrder;
 
     /// <summary>
     /// Builds an index over the sheets in cascade order. <paramref name="mediaApplies"/> and
@@ -94,13 +104,37 @@ internal sealed class CssCascadeRuleIndex
     internal static CssCascadeRuleIndex Build(
         IReadOnlyList<(CssStyleSheet Sheet, CssOrigin Origin)> sheets,
         Func<string, bool> mediaApplies,
-        Func<string, bool> supportsApplies)
+        Func<string, bool> supportsApplies,
+        CssCascadeLayerOrder? layerOrder = null)
     {
         var entries = new List<Entry>();
         var byId = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
         var byClass = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
         var byType = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
         var universal = new List<int>();
+
+        var layerOrders = new Dictionary<CssOrigin, CssCascadeLayerOrder>();
+        if (layerOrder is not null)
+        {
+            layerOrders[CssOrigin.Author] = layerOrder;
+        }
+        else
+        {
+            foreach (var (sheet, origin) in sheets)
+            {
+                if (!layerOrders.TryGetValue(origin, out var order))
+                {
+                    order = new CssCascadeLayerOrder();
+                    layerOrders[origin] = order;
+                }
+                order.Scan(sheet.Rules);
+            }
+
+            foreach (var order in layerOrders.Values)
+            {
+                order.Freeze();
+            }
+        }
 
         void File(int entryIndex, CssStyleRule rule)
         {
@@ -144,7 +178,11 @@ internal sealed class CssCascadeRuleIndex
                 return;
         }
 
-        void Walk(IReadOnlyList<CssRule> rules, CssOrigin origin, List<CssAtRule>? containerConditions)
+        void Walk(
+            IReadOnlyList<CssRule> rules,
+            CssOrigin origin,
+            List<CssAtRule>? containerConditions,
+            int layerIndex)
         {
             foreach (var rule in rules)
             {
@@ -154,18 +192,19 @@ internal sealed class CssCascadeRuleIndex
                         entries.Add(new Entry(
                             styleRule,
                             origin,
-                            containerConditions is { Count: > 0 } ? [.. containerConditions] : null));
+                            containerConditions is { Count: > 0 } ? [.. containerConditions] : null,
+                            layerIndex));
                         File(entries.Count - 1, styleRule);
                         break;
 
                     case CssAtRule atRule when atRule.Name.Equals("media", StringComparison.OrdinalIgnoreCase):
                         if (mediaApplies(atRule.Prelude))
-                            Walk(atRule.Rules, origin, containerConditions);
+                            Walk(atRule.Rules, origin, containerConditions, layerIndex);
                         break;
 
                     case CssAtRule atRule when atRule.Name.Equals("supports", StringComparison.OrdinalIgnoreCase):
                         if (supportsApplies(atRule.Prelude))
-                            Walk(atRule.Rules, origin, containerConditions);
+                            Walk(atRule.Rules, origin, containerConditions, layerIndex);
                         break;
 
                     case CssAtRule atRule when atRule.Name.Equals("container", StringComparison.OrdinalIgnoreCase):
@@ -174,17 +213,30 @@ internal sealed class CssCascadeRuleIndex
                         var nested = containerConditions is null
                             ? [atRule]
                             : new List<CssAtRule>(containerConditions) { atRule };
-                        Walk(atRule.Rules, origin, nested);
+                        Walk(atRule.Rules, origin, nested, layerIndex);
                         break;
                     }
+
+                    case CssAtRule atRule when atRule.Name.Equals("layer", StringComparison.OrdinalIgnoreCase):
+                        if (atRule.HasBlock)
+                        {
+                            var nestedLayerIndex = layerOrders.TryGetValue(origin, out var order)
+                                ? order.GetLayerIndex(atRule)
+                                : layerIndex;
+                            if (nestedLayerIndex < 0)
+                                nestedLayerIndex = layerIndex;
+
+                            Walk(atRule.Rules, origin, containerConditions, nestedLayerIndex);
+                        }
+                        break;
                 }
             }
         }
 
         foreach (var (sheet, origin) in sheets)
-            Walk(sheet.Rules, origin, containerConditions: null);
+            Walk(sheet.Rules, origin, containerConditions: null, CssCascadeLayerOrder.UnlayeredIndex);
 
-        return new CssCascadeRuleIndex([.. entries], byId, byClass, byType, universal);
+        return new CssCascadeRuleIndex([.. entries], byId, byClass, byType, universal, layerOrders);
     }
 
     /// <summary>

@@ -19,9 +19,10 @@ namespace Broiler.CSS.Dom;
 /// <c>@import</c>/<c>@namespace</c> correctly. Only the assembly is here; cascade,
 /// inheritance, and computed style stay in <see cref="CssStyleEngine"/>.
 /// </remarks>
-public sealed class CssStyleScopeBuilder(CssStyleEngine engine)
+public sealed class CssStyleScopeBuilder(CssStyleEngine engine, ICssStyleSheetLoader? loader = null)
 {
     private readonly CssStyleEngine _engine = engine ?? throw new ArgumentNullException(nameof(engine));
+    private ICssStyleSheetLoader? _loader = loader;
     private bool _synced;
     private int _syncHash;
 
@@ -29,12 +30,39 @@ public sealed class CssStyleScopeBuilder(CssStyleEngine engine)
     public CssStyleEngine Engine => _engine;
 
     /// <summary>
-    /// A host-supplied stylesheet in document order. <paramref name="CssText"/> is the
-    /// already-extracted CSS text, <paramref name="Origin"/> its cascade origin, and
-    /// <paramref name="Media"/> the element's <c>media</c> attribute — <c>null</c>, empty,
-    /// or whitespace meaning "applies to all media".
+    /// The loader used to resolve <c>@import</c> rules, or <see langword="null"/> if external imports are not resolved.
+    /// Setting this clears the sync state to trigger a re-sync on the next <see cref="Sync"/> call.
     /// </summary>
-    public readonly record struct StyleSource(string CssText, CssOrigin Origin, string? Media = null);
+    public ICssStyleSheetLoader? Loader
+    {
+        get => _loader;
+        set
+        {
+            if (!ReferenceEquals(_loader, value))
+            {
+                _loader = value;
+                _synced = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A host-supplied stylesheet in document order. <paramref name="CssText"/> is the
+    /// already-extracted CSS text, <paramref name="Origin"/> its cascade origin,
+    /// <paramref name="Media"/> the element's <c>media</c> attribute — <c>null</c>, empty,
+    /// or whitespace meaning "applies to all media", and optional <paramref name="BaseUrl"/>.
+    /// </summary>
+    public readonly record struct StyleSource(
+        string CssText,
+        CssOrigin Origin,
+        string? Media = null,
+        string? BaseUrl = null)
+    {
+        public StyleSource(string cssText, CssOrigin origin, string? media)
+            : this(cssText, origin, media, null)
+        {
+        }
+    }
 
     /// <summary>
     /// Re-syncs <see cref="Engine"/>'s registered stylesheets from <paramref name="sources"/>,
@@ -62,7 +90,12 @@ public sealed class CssStyleScopeBuilder(CssStyleEngine engine)
             foreach (var source in included)
             {
                 if (!string.IsNullOrEmpty(source.CssText))
-                    _engine.AddStyleSheet(new CssParser().ParseStyleSheet(source.CssText), source.Origin);
+                {
+                    var sheet = new CssParser().ParseStyleSheet(source.CssText);
+                    if (_loader is not null)
+                        sheet = CssImportResolver.ResolveImports(sheet, _loader, source.BaseUrl);
+                    _engine.AddStyleSheet(sheet, source.Origin);
+                }
             }
 
             _syncHash = hash;
@@ -73,18 +106,22 @@ public sealed class CssStyleScopeBuilder(CssStyleEngine engine)
         return _engine;
     }
 
-    // Identity of the media-filtered source set: order-sensitive over (text, origin). The
-    // media gate already ran, so a viewport change that does not flip any media match leaves
-    // this unchanged and skips the (re-parse) resync; one that flips a match changes the
-    // included set and therefore the hash.
-    private static int ComputeHash(List<StyleSource> included)
+    // Identity of the media-filtered source set: order-sensitive over (text, origin, baseUrl)
+    // and loader reference. The media gate already ran, so a viewport change that does not flip
+    // any media match leaves this unchanged and skips the (re-parse) resync; one that flips a
+    // match changes the included set and therefore the hash.
+    private int ComputeHash(List<StyleSource> included)
     {
         var hash = new HashCode();
         hash.Add(included.Count);
+        if (_loader is not null)
+            hash.Add(_loader);
         foreach (var source in included)
         {
             hash.Add(source.CssText, StringComparer.Ordinal);
             hash.Add(source.Origin);
+            if (source.BaseUrl is not null)
+                hash.Add(source.BaseUrl, StringComparer.Ordinal);
         }
         return hash.ToHashCode();
     }

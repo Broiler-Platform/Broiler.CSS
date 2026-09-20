@@ -219,7 +219,7 @@ public sealed partial class CssStyleEngine
                 continue;
 
             var lower = value.ToLowerInvariant();
-            if (lower is not ("initial" or "inherit" or "unset" or "revert"))
+            if (lower is not ("initial" or "inherit" or "unset" or "revert" or "revert-layer"))
                 continue;
 
             registrations.TryGetValue(key, out var registration);
@@ -230,7 +230,7 @@ public sealed partial class CssStyleEngine
             {
                 "initial" => registration?.InitialValue,
                 "inherit" => parentValue ?? registration?.InitialValue,
-                "unset" or "revert" => registration == null
+                "unset" or "revert" or "revert-layer" => registration == null
                     ? parentValue
                     : registration.Inherits
                         ? parentValue ?? registration.InitialValue

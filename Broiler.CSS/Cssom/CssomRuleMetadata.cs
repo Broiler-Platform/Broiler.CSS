@@ -26,8 +26,41 @@ public enum CssomRuleType
     Property = 25,
 }
 
-/// <summary>Decomposed <c>@import</c> prelude.</summary>
-public readonly record struct CssImportMetadata(string Href, string Media);
+/// <summary>The layer an <c>@import</c> puts its sheet in (CSS Cascade 5 §2).</summary>
+public enum CssImportLayer
+{
+    /// <summary>No <c>layer</c> part: the sheet's rules are unlayered.</summary>
+    None = 0,
+
+    /// <summary>The bare <c>layer</c> keyword: an anonymous layer.</summary>
+    Anonymous = 1,
+
+    /// <summary><c>layer(&lt;layer-name&gt;)</c>, with the name in <see cref="CssImportMetadata.LayerName"/>.</summary>
+    Named = 2,
+}
+
+/// <summary>
+/// Decomposed <c>@import</c> prelude according to CSS Cascade 5 §2:
+/// <c>@import [ &lt;url&gt; | &lt;string&gt; ] [ layer | layer(&lt;layer-name&gt;) ]? [ supports(...) ]? &lt;media-query-list&gt;?</c>.
+/// </summary>
+public readonly record struct CssImportMetadata(
+    string Href,
+    CssImportLayer Layer,
+    string? LayerName,
+    string? Supports,
+    string Media)
+{
+    public CssImportMetadata(string href, string media)
+        : this(href, CssImportLayer.None, null, null, media)
+    {
+    }
+
+    public void Deconstruct(out string href, out string media)
+    {
+        href = Href;
+        media = Media;
+    }
+}
 
 /// <summary>Decomposed <c>@namespace</c> prelude.</summary>
 public readonly record struct CssNamespaceMetadata(string? Prefix, string Uri);
@@ -101,36 +134,284 @@ public static class CssomRuleMetadata
         return rule.Prelude.Trim().TrimEnd(';').Trim().Trim('"', '\'');
     }
 
-    /// <summary>Decomposes an <c>@import</c> prelude into its href and media list.</summary>
+    /// <summary>Decomposes an <c>@import</c> prelude into its Cascade 5 parts.</summary>
     public static CssImportMetadata GetImport(CssAtRule rule)
     {
         ArgumentNullException.ThrowIfNull(rule);
-        var importBody = rule.Prelude.Trim().TrimEnd(';').Trim();
-        var href = string.Empty;
-        var mediaText = string.Empty;
+        return ParseImportPrelude(rule.Prelude);
+    }
 
-        if (importBody.StartsWith("url(", StringComparison.OrdinalIgnoreCase))
+    /// <summary>
+    /// Parses an <c>@import</c> prelude according to CSS Cascade 5 §2:
+    /// URL (<c>url(...)</c> or string), optional layer (<c>layer</c> or <c>layer(&lt;name&gt;)</c>),
+    /// optional supports condition (<c>supports(...)</c>), and media query list.
+    /// </summary>
+    public static CssImportMetadata ParseImportPrelude(string prelude)
+    {
+        if (string.IsNullOrWhiteSpace(prelude))
+            return new CssImportMetadata(string.Empty, CssImportLayer.None, null, null, string.Empty);
+
+        var text = prelude.Trim().TrimEnd(';').Trim();
+        var i = SkipWhitespaceAndComments(text, 0);
+
+        if (!TryReadImportUrl(text, ref i, out var href))
+            return new CssImportMetadata(string.Empty, CssImportLayer.None, null, null, string.Empty);
+
+        i = SkipWhitespaceAndComments(text, i);
+        var layer = CssImportLayer.None;
+        string? layerName = null;
+
+        if (StartsWithIdent(text, i, "layer"))
         {
-            var openParen = importBody.IndexOf('(');
-            var closeParen = importBody.IndexOf(')', openParen + 1);
-            if (openParen >= 0 && closeParen > openParen)
+            var afterKeyword = i + "layer".Length;
+            if (afterKeyword < text.Length && text[afterKeyword] == '(')
             {
-                href = importBody.Substring(openParen + 1, closeParen - openParen - 1).Trim().Trim('"', '\'');
-                mediaText = importBody[(closeParen + 1)..].Trim();
+                var close = FindMatchingParenthesis(text, afterKeyword);
+                if (close >= 0)
+                {
+                    var inner = text[(afterKeyword + 1)..close];
+                    var cleanedName = CssSyntax.RemoveComments(inner).Trim();
+                    if (CssLayerNameMetadata.IsValidLayerName(cleanedName))
+                    {
+                        layer = CssImportLayer.Named;
+                        layerName = cleanedName;
+                        i = SkipWhitespaceAndComments(text, close + 1);
+                    }
+                }
+            }
+            else
+            {
+                layer = CssImportLayer.Anonymous;
+                i = SkipWhitespaceAndComments(text, afterKeyword);
             }
         }
-        else if (importBody.StartsWith("\"", StringComparison.Ordinal) || importBody.StartsWith('\''))
+
+        string? supports = null;
+        if (StartsWithIdent(text, i, "supports"))
         {
-            var quote = importBody[0];
-            var closingQuote = importBody.IndexOf(quote, 1);
-            if (closingQuote > 0)
+            var afterSupports = i + "supports".Length;
+            if (afterSupports < text.Length && text[afterSupports] == '(')
             {
-                href = importBody[1..closingQuote];
-                mediaText = importBody[(closingQuote + 1)..].Trim();
+                var close = FindMatchingParenthesis(text, afterSupports);
+                if (close >= 0)
+                {
+                    supports = text[(afterSupports + 1)..close].Trim();
+                    i = SkipWhitespaceAndComments(text, close + 1);
+                }
             }
         }
 
-        return new CssImportMetadata(href, mediaText);
+        var media = text[i..].Trim();
+        return new CssImportMetadata(href, layer, layerName, supports, media);
+    }
+
+    private static bool TryReadImportUrl(string text, ref int i, out string href)
+    {
+        href = string.Empty;
+        if (i < text.Length && (text[i] == '"' || text[i] == '\''))
+            return TryReadCssString(text, ref i, out href);
+
+        if (string.Compare(text, i, "url(", 0, 4, StringComparison.OrdinalIgnoreCase) != 0)
+            return false;
+
+        var j = i + 4;
+        while (j < text.Length && IsCssWhitespace(text[j]))
+            j++;
+
+        if (j < text.Length && (text[j] == '"' || text[j] == '\''))
+        {
+            if (!TryReadCssString(text, ref j, out var quoted))
+                return false;
+            while (j < text.Length && IsCssWhitespace(text[j]))
+                j++;
+            if (j >= text.Length || text[j] != ')')
+                return false;
+
+            (href, i) = (quoted, j + 1);
+            return true;
+        }
+
+        var unquoted = new System.Text.StringBuilder();
+        while (j < text.Length && text[j] != ')')
+        {
+            var c = text[j];
+            if (IsCssWhitespace(c))
+            {
+                while (j < text.Length && IsCssWhitespace(text[j]))
+                    j++;
+                if (j < text.Length && text[j] != ')')
+                    return false;
+            }
+            else if (c is '"' or '\'' or '(' ||
+                     c is (>= '\0' and <= '\b') or '\v' or (>= '\u000E' and <= '\u001F') or '\u007F')
+            {
+                return false;
+            }
+            else if (c == '\\')
+            {
+                if (!CssSyntax.IsValidEscape(text, j))
+                    return false;
+                AppendCssEscape(text, ref j, unquoted);
+            }
+            else
+            {
+                unquoted.Append(text[j++]);
+            }
+        }
+
+        if (j >= text.Length)
+            return false;
+
+        (href, i) = (unquoted.ToString(), j + 1);
+        return true;
+    }
+
+    private static bool TryReadCssString(string text, ref int i, out string value)
+    {
+        var quote = text[i];
+        var decoded = new System.Text.StringBuilder();
+        var j = i + 1;
+        while (j < text.Length && text[j] is not ('\n' or '\r' or '\f'))
+        {
+            var c = text[j];
+            if (c == quote)
+            {
+                (value, i) = (decoded.ToString(), j + 1);
+                return true;
+            }
+
+            if (c == '\\')
+                AppendCssEscape(text, ref j, decoded);
+            else
+                decoded.Append(text[j++]);
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static void AppendCssEscape(string text, ref int i, System.Text.StringBuilder into)
+    {
+        i++;
+        if (i >= text.Length)
+            return;
+
+        if (char.IsAsciiHexDigit(text[i]))
+        {
+            var codePoint = 0;
+            var digitsEnd = Math.Min(text.Length, i + 6);
+            while (i < digitsEnd && char.IsAsciiHexDigit(text[i]))
+            {
+                var digit = text[i++];
+                codePoint = (codePoint * 16) + (digit <= '9' ? digit - '0' : (digit | 0x20) - 'a' + 10);
+            }
+
+            if (i < text.Length && IsCssWhitespace(text[i]))
+                i += text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n' ? 2 : 1;
+
+            into.Append(codePoint == 0 || codePoint > 0x10FFFF || codePoint is >= 0xD800 and <= 0xDFFF
+                ? "\uFFFD"
+                : char.ConvertFromUtf32(codePoint));
+            return;
+        }
+
+        if (text[i] is '\n' or '\r' or '\f')
+        {
+            i += text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n' ? 2 : 1;
+            return;
+        }
+
+        into.Append(text[i]);
+        i++;
+    }
+
+    private static bool StartsWithIdent(string text, int i, string word)
+    {
+        if (i + word.Length > text.Length ||
+            string.Compare(text, i, word, 0, word.Length, StringComparison.OrdinalIgnoreCase) != 0)
+            return false;
+
+        var next = i + word.Length;
+        return next == text.Length || !(IsNameChar(text[next]) || text[next] == '\\');
+    }
+
+    private static bool IsNameChar(char c) =>
+        char.IsLetterOrDigit(c) || c is '_' or '-' || c >= 0x80;
+
+    private static bool IsCssWhitespace(char c) =>
+        c is ' ' or '\t' or '\r' or '\n' or '\f';
+
+    private static int SkipWhitespaceAndComments(string text, int i)
+    {
+        while (i < text.Length)
+        {
+            if (IsCssWhitespace(text[i]))
+            {
+                i++;
+                continue;
+            }
+
+            if (i + 1 < text.Length && text[i] == '/' && text[i + 1] == '*')
+            {
+                var close = text.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                i = close < 0 ? text.Length : close + 2;
+                continue;
+            }
+
+            break;
+        }
+        return i;
+    }
+
+    private static int FindMatchingParenthesis(string text, int openParen)
+    {
+        var depth = 0;
+        char quote = '\0';
+        for (var i = openParen; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (quote != '\0')
+            {
+                if (c == '\\')
+                    i++;
+                else if (c == quote)
+                    quote = '\0';
+                continue;
+            }
+
+            if (c is '"' or '\'')
+            {
+                quote = c;
+                continue;
+            }
+
+            if (CssSyntax.IsValidEscape(text, i))
+            {
+                i++;
+                continue;
+            }
+
+            if (c == '/' && i + 1 < text.Length && text[i + 1] == '*')
+            {
+                var commentEnd = text.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                if (commentEnd < 0)
+                    return -1;
+                i = commentEnd + 1;
+                continue;
+            }
+
+            if (c == '(')
+            {
+                depth++;
+            }
+            else if (c == ')')
+            {
+                depth--;
+                if (depth == 0)
+                    return i;
+            }
+        }
+        return -1;
     }
 
     /// <summary>Decomposes an <c>@namespace</c> prelude into its optional prefix and URI.</summary>

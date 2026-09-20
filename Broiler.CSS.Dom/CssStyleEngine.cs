@@ -153,6 +153,22 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         }
     }
 
+    /// <summary>
+    /// Registers a parsed stylesheet under the given cascade origin, resolving any leading
+    /// <c>@import</c> rules using the provided <paramref name="loader"/>.
+    /// </summary>
+    public void AddStyleSheet(
+        CssStyleSheet sheet,
+        ICssStyleSheetLoader loader,
+        CssOrigin origin = CssOrigin.Author,
+        string? baseUrl = null)
+    {
+        ArgumentNullException.ThrowIfNull(sheet);
+        ArgumentNullException.ThrowIfNull(loader);
+        var resolved = CssImportResolver.ResolveImports(sheet, loader, baseUrl);
+        AddStyleSheet(resolved, origin);
+    }
+
     /// <summary>Removes all registered stylesheets.</summary>
     public void ClearStyleSheets()
     {
@@ -678,13 +694,29 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
                     continue;
                 }
 
-                ApplyStyleRule(entry.Rule, entry.Origin, element, pseudoElement, winners, ref order);
+                ApplyStyleRule(entry.Rule, entry.Origin, entry.LayerIndex, element, pseudoElement, winners, ref order);
             }
         }
         else
         {
+            var layerOrders = new Dictionary<CssOrigin, CssCascadeLayerOrder>();
             foreach (var entry in sheetsSnapshot)
-                CollectFromRules(entry.Sheet.Rules, entry.Origin, element, pseudoElement, winners, ref order);
+            {
+                if (!layerOrders.TryGetValue(entry.Origin, out var layerOrder))
+                {
+                    layerOrder = new CssCascadeLayerOrder();
+                    layerOrders[entry.Origin] = layerOrder;
+                }
+                layerOrder.Scan(entry.Sheet.Rules);
+            }
+            foreach (var layerOrder in layerOrders.Values)
+                layerOrder.Freeze();
+
+            foreach (var entry in sheetsSnapshot)
+            {
+                var layerOrder = layerOrders[entry.Origin];
+                CollectFromRules(entry.Sheet.Rules, entry.Origin, layerOrder, CssCascadeLayerOrder.UnlayeredIndex, element, pseudoElement, winners, ref order);
+            }
         }
 
         if (includeInlineStyle && pseudoElement is null)
@@ -697,7 +729,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
                 foreach (var (name, value, important) in ParseDeclarations(inline))
                 {
                     if (IsAcceptableDeclarationValue(name, value))
-                        AddDeclaration(winners, name, value, important, CssOrigin.Author, int.MaxValue, order++);
+                        AddDeclaration(winners, name, value, important, CssOrigin.Author, CssCascadeLayerOrder.UnlayeredIndex, int.MaxValue, order++);
                     else
                         CssEngineDiagnostics.ReportRejected(name, value);
                 }
@@ -705,8 +737,16 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         }
 
         var map = new Dictionary<string, string>(winners.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (var kv in winners)
-            map[kv.Key] = kv.Value.Value;
+        foreach (var (prop, head) in winners)
+        {
+            var current = head;
+            while (current.NextTier is not null &&
+                   string.Equals(current.Value, "revert-layer", StringComparison.OrdinalIgnoreCase))
+            {
+                current = current.NextTier;
+            }
+            map[prop] = current.Value;
+        }
 
         // Only memoize when no invalidation occurred while this cascade was computed:
         // a host re-sync (see the snapshot note above) bumps the generation and clears
@@ -771,6 +811,16 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             prelude => SupportsConditionSyntax.EvaluatesTrue(prelude, IsFeatureQuerySupported));
         _ruleIndexes[mode] = index;
         return index;
+    }
+
+    /// <summary>Returns the cascade layer order registry for the given origin.</summary>
+    public CssCascadeLayerOrder GetLayerOrder(CssOrigin origin = CssOrigin.Author)
+    {
+        lock (_sync)
+        {
+            var index = GetOrBuildRuleIndex(RenderMode.Current);
+            return index.GetLayerOrder(origin);
+        }
     }
 
     /// <summary>
@@ -848,6 +898,8 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     private void CollectFromRules(
         IReadOnlyList<CssRule> rules,
         CssOrigin origin,
+        CssCascadeLayerOrder layerOrder,
+        int layerIndex,
         DomElement element,
         string? pseudoElement,
         Dictionary<string, CascadeSlot> winners,
@@ -858,7 +910,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             switch (rule)
             {
                 case CssStyleRule styleRule:
-                    ApplyStyleRule(styleRule, origin, element, pseudoElement, winners, ref order);
+                    ApplyStyleRule(styleRule, origin, layerIndex, element, pseudoElement, winners, ref order);
                     break;
 
                 case CssAtRule atRule when atRule.Name.Equals("media", StringComparison.OrdinalIgnoreCase):
@@ -868,7 +920,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
                             _environment.ViewportHeight,
                             CurrentCustomMedia()))
                     {
-                        CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
+                        CollectFromRules(atRule.Rules, origin, layerOrder, layerIndex, element, pseudoElement, winners, ref order);
                     }
                     break;
 
@@ -881,7 +933,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
                     // ("color: rainbow"), or a <general-enclosed> block — resolved here through
                     // the feature-support oracle (IsFeatureQuerySupported).
                     if (SupportsConditionSyntax.EvaluatesTrue(atRule.Prelude, IsFeatureQuerySupported))
-                        CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
+                        CollectFromRules(atRule.Rules, origin, layerOrder, layerIndex, element, pseudoElement, winners, ref order);
                     break;
 
                 case CssAtRule atRule when atRule.Name.Equals("container", StringComparison.OrdinalIgnoreCase):
@@ -889,7 +941,17 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
                     // satisfies the size condition. An unresolved container/size evaluates to false,
                     // matching the prior behaviour of ignoring the rule (see CssStyleEngine.ContainerQueries).
                     if (EvaluateContainerQuery(atRule.Prelude, element, pseudoElement))
-                        CollectFromRules(atRule.Rules, origin, element, pseudoElement, winners, ref order);
+                        CollectFromRules(atRule.Rules, origin, layerOrder, layerIndex, element, pseudoElement, winners, ref order);
+                    break;
+
+                case CssAtRule atRule when atRule.Name.Equals("layer", StringComparison.OrdinalIgnoreCase):
+                    if (atRule.HasBlock)
+                    {
+                        var nestedLayerIndex = layerOrder.GetLayerIndex(atRule);
+                        if (nestedLayerIndex < 0)
+                            nestedLayerIndex = layerIndex;
+                        CollectFromRules(atRule.Rules, origin, layerOrder, nestedLayerIndex, element, pseudoElement, winners, ref order);
+                    }
                     break;
             }
         }
@@ -898,6 +960,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     private void ApplyStyleRule(
         CssStyleRule styleRule,
         CssOrigin origin,
+        int layerIndex,
         DomElement element,
         string? pseudoElement,
         Dictionary<string, CascadeSlot> winners,
@@ -935,7 +998,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             }
 
             var currentOrder = order++;
-            AddDeclaration(winners, declaration.Name, declaration.Value.Text, declaration.Important, origin, bestSpecificity, currentOrder);
+            AddDeclaration(winners, declaration.Name, declaration.Value.Text, declaration.Important, origin, layerIndex, bestSpecificity, currentOrder);
         }
     }
 
@@ -945,12 +1008,12 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         string value,
         bool important,
         CssOrigin origin,
+        int layerIndex,
         int specificity,
         int order)
     {
-        var slot = new CascadeSlot(value, CascadeRank(origin, important), specificity, order);
-        if (!winners.TryGetValue(property, out var existing) || slot.Beats(existing))
-            winners[property] = slot;
+        var rank = CascadeRank(origin, important);
+        AddSlot(winners, property, value, rank, layerIndex, specificity, order);
 
         // A shorthand must also compete for the longhands it sets within the
         // cascade, so a higher-precedence shorthand overrides a lower-precedence
@@ -961,15 +1024,72 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         // because it keeps any already-present longhand regardless of origin. Seeding
         // each longhand with the shorthand's rank/specificity/order lets the ordinary
         // cascade comparison resolve shorthand-vs-longhand precedence.
-        AddShorthandLonghandSlots(winners, property, slot);
+        AddShorthandLonghandSlots(winners, property, value, rank, layerIndex, specificity, order);
 
         var unprefixed = CssPropertyNames.StripVendorPrefix(property);
         if (!string.Equals(unprefixed, property, StringComparison.Ordinal))
         {
-            var aliasSlot = new CascadeSlot(value, CascadeRank(origin, important), specificity, order);
-            if (!winners.TryGetValue(unprefixed, out var existingAlias) || aliasSlot.Beats(existingAlias))
-                winners[unprefixed] = aliasSlot;
+            AddSlot(winners, unprefixed, value, rank, layerIndex, specificity, order);
         }
+    }
+
+    private static void AddSlot(
+        Dictionary<string, CascadeSlot> winners,
+        string property,
+        string value,
+        int rank,
+        int layerIndex,
+        int specificity,
+        int order)
+    {
+        var isInline = specificity == int.MaxValue;
+        if (!winners.TryGetValue(property, out var head))
+        {
+            winners[property] = new CascadeSlot(value, rank, layerIndex, specificity, order);
+            return;
+        }
+
+        // Search the linked list for a node with the same tier (Rank, LayerIndex, IsInline).
+        CascadeSlot? existingTierNode = null;
+        for (var curr = head; curr != null; curr = curr.NextTier)
+        {
+            if (curr.Rank == rank && curr.LayerIndex == layerIndex && curr.IsInline == isInline)
+            {
+                existingTierNode = curr;
+                break;
+            }
+        }
+
+        if (existingTierNode is not null)
+        {
+            bool beats = specificity != existingTierNode.Specificity
+                ? specificity > existingTierNode.Specificity
+                : order >= existingTierNode.Order;
+            if (beats)
+            {
+                existingTierNode.Value = value;
+                existingTierNode.Specificity = specificity;
+                existingTierNode.Order = order;
+            }
+            return;
+        }
+
+        var newSlot = new CascadeSlot(value, rank, layerIndex, specificity, order);
+        if (newSlot.Beats(head))
+        {
+            newSlot.NextTier = head;
+            winners[property] = newSlot;
+            return;
+        }
+
+        var prev = head;
+        while (prev.NextTier is not null && !newSlot.Beats(prev.NextTier))
+        {
+            prev = prev.NextTier;
+        }
+
+        newSlot.NextTier = prev.NextTier;
+        prev.NextTier = newSlot;
     }
 
     /// <summary>
@@ -987,9 +1107,15 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     /// extra keys, so nothing is seeded (a no-op).
     /// </summary>
     private static void AddShorthandLonghandSlots(
-        Dictionary<string, CascadeSlot> winners, string property, CascadeSlot shorthand)
+        Dictionary<string, CascadeSlot> winners,
+        string property,
+        string value,
+        int rank,
+        int layerIndex,
+        int specificity,
+        int order)
     {
-        if (shorthand.Value is null)
+        if (value is null)
             return;
 
         // Expand the shorthand in isolation: ExpandCssShorthands is additive and only
@@ -998,19 +1124,17 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         // the property's grammar (box 1–4 values, the background/font component order, …).
         var expanded = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            [property] = shorthand.Value,
+            [property] = value,
         };
         ExpandCssShorthands(expanded);
         if (expanded.Count == 1)
             return; // not a modelled shorthand — nothing expanded
 
-        foreach (var (name, value) in expanded)
+        foreach (var (name, longhandValue) in expanded)
         {
             if (string.Equals(name, property, StringComparison.OrdinalIgnoreCase))
                 continue; // the shorthand key itself is already placed by the caller
-            var longhandSlot = shorthand with { Value = value };
-            if (!winners.TryGetValue(name, out var existing) || longhandSlot.Beats(existing))
-                winners[name] = longhandSlot;
+            AddSlot(winners, name, longhandValue, rank, layerIndex, specificity, order);
         }
     }
 
@@ -1019,13 +1143,33 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             ? origin switch { CssOrigin.Author => 3, CssOrigin.User => 4, _ => 5 }
             : origin switch { CssOrigin.UserAgent => 0, CssOrigin.User => 1, _ => 2 };
 
-    private readonly record struct CascadeSlot(string Value, int Rank, int Specificity, int Order)
+    private sealed class CascadeSlot(string value, int rank, int layerIndex, int specificity, int order)
     {
-        // Later declarations of equal rank and specificity win (source order).
-        public bool Beats(CascadeSlot other) =>
-            Rank != other.Rank ? Rank > other.Rank
-            : Specificity != other.Specificity ? Specificity > other.Specificity
-            : Order >= other.Order;
+        public string Value { get; set; } = value;
+        public int Rank { get; } = rank;
+        public int LayerIndex { get; } = layerIndex;
+        public int Specificity { get; set; } = specificity;
+        public int Order { get; set; } = order;
+        public CascadeSlot? NextTier { get; set; }
+
+        public bool IsInline => Specificity == int.MaxValue;
+
+        public bool Beats(CascadeSlot other)
+        {
+            if (Rank != other.Rank)
+                return Rank > other.Rank;
+
+            if (IsInline != other.IsInline)
+                return IsInline;
+
+            if (LayerIndex != other.LayerIndex)
+                return Rank >= 3 ? LayerIndex < other.LayerIndex : LayerIndex > other.LayerIndex;
+
+            if (Specificity != other.Specificity)
+                return Specificity > other.Specificity;
+
+            return Order >= other.Order;
+        }
     }
 
     private readonly record struct StyleSheetEntry(CssStyleSheet Sheet, CssOrigin Origin);

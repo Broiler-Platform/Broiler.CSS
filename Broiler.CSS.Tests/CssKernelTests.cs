@@ -207,4 +207,58 @@ public sealed class CssKernelTests
         }
         throw new DirectoryNotFoundException("Could not locate the CSS Phase 0 corpus.");
     }
+
+    [Fact]
+    public void Parser_Allows_Valid_Leading_Imports_And_Layer_Statements()
+    {
+        const string css = """
+            @charset "utf-8";
+            @layer reset, base;
+            @import url(a.css);
+            @import url(b.css) layer(base);
+            p { color: red; }
+            """;
+
+        var sheet = new CssParser().ParseStyleSheet(css);
+        Assert.Empty(sheet.Diagnostics);
+        Assert.Equal(5, sheet.Rules.Count);
+        Assert.Equal("charset", ((CssAtRule)sheet.Rules[0]).Name);
+        Assert.Equal("layer", ((CssAtRule)sheet.Rules[1]).Name);
+        Assert.Equal("import", ((CssAtRule)sheet.Rules[2]).Name);
+        Assert.Equal("import", ((CssAtRule)sheet.Rules[3]).Name);
+        Assert.IsType<CssStyleRule>(sheet.Rules[4]);
+    }
+
+    [Theory]
+    [InlineData("p { color: red; } @import url(b.css);", 1)]
+    [InlineData("@media screen { p { color: red; } } @import url(b.css);", 1)]
+    [InlineData("@layer foo { p { color: red; } } @import url(b.css);", 1)]
+    [InlineData("@namespace svg url(http://www.w3.org/2000/svg); @import url(b.css);", 1)]
+    [InlineData("@import url(a.css); @layer reset; @import url(b.css);", 2)]
+    [InlineData("@import url(a.css) { p { color: red; } }", 0)]
+    public void Parser_Diagnoses_And_Ignores_Misplaced_Import_Rules(string css, int expectedValidRules)
+    {
+        var sheet = new CssParser().ParseStyleSheet(css);
+        Assert.Single(sheet.Diagnostics);
+        Assert.Equal("CSS1005", sheet.Diagnostics[0].Code);
+        Assert.Equal(CssDiagnosticSeverity.Warning, sheet.Diagnostics[0].Severity);
+        Assert.Equal(expectedValidRules, sheet.Rules.Count);
+    }
+
+    [Fact]
+    public void Parser_Diagnoses_And_Ignores_Nested_Import_Inside_Style_Rule()
+    {
+        const string css = """
+            div {
+                @import url(nested.css);
+                color: blue;
+            }
+            """;
+
+        var sheet = new CssParser().ParseStyleSheet(css);
+        Assert.Single(sheet.Diagnostics);
+        Assert.Equal("CSS1005", sheet.Diagnostics[0].Code);
+        var styleRule = Assert.IsType<CssStyleRule>(Assert.Single(sheet.Rules));
+        Assert.Equal("blue", styleRule.Declarations.GetPropertyValue("color"));
+    }
 }

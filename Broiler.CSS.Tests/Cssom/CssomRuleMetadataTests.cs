@@ -49,14 +49,141 @@ public sealed class CssomRuleMetadataTests
     }
 
     [Theory]
-    [InlineData("@import url(\"a.css\") screen;", "a.css", "screen")]
-    [InlineData("@import 'b.css';", "b.css", "")]
-    [InlineData("@import url(c.css) print, tv;", "c.css", "print, tv")]
-    public void GetImport_Decomposes_Href_And_Media(string css, string href, string media)
+    [InlineData("@import url(\"a.css\") screen;", "a.css", CssImportLayer.None, null, null, "screen")]
+    [InlineData("@import 'b.css';", "b.css", CssImportLayer.None, null, null, "")]
+    [InlineData("@import url(c.css) print, tv;", "c.css", CssImportLayer.None, null, null, "print, tv")]
+    [InlineData("@import url(\"a.css\") layer;", "a.css", CssImportLayer.Anonymous, null, null, "")]
+    [InlineData("@import url(\"a.css\") layer(base);", "a.css", CssImportLayer.Named, "base", null, "")]
+    [InlineData("@import url('a.css') layer(base.reset);", "a.css", CssImportLayer.Named, "base.reset", null, "")]
+    [InlineData("@import url(a.css) supports(display: grid);", "a.css", CssImportLayer.None, null, "display: grid", "")]
+    [InlineData("@import url(\"a.css\") layer(framework.grid) supports(display: grid) screen and (min-width: 600px);", "a.css", CssImportLayer.Named, "framework.grid", "display: grid", "screen and (min-width: 600px)")]
+    [InlineData("@import \"a.css\" layer supports((display: flex) and (display: grid));", "a.css", CssImportLayer.Anonymous, null, "(display: flex) and (display: grid)", "")]
+    [InlineData("@import url(\"nested(1).css\");", "nested(1).css", CssImportLayer.None, null, null, "")]
+    [InlineData("@import url(\"a\\\"b.css\");", "a\"b.css", CssImportLayer.None, null, null, "")]
+    [InlineData("@import url(\\31 .css);", "1.css", CssImportLayer.None, null, null, "")]
+    public void GetImport_Decomposes_Cascade5_Prelude(
+        string css,
+        string href,
+        CssImportLayer layer,
+        string? layerName,
+        string? supports,
+        string media)
     {
         var import = CssomRuleMetadata.GetImport((CssAtRule)ParseSingleRule(css));
         Assert.Equal(href, import.Href);
+        Assert.Equal(layer, import.Layer);
+        Assert.Equal(layerName, import.LayerName);
+        Assert.Equal(supports, import.Supports);
         Assert.Equal(media, import.Media);
+
+        // Verify two-tuple deconstruction compatibility
+        var (h, m) = import;
+        Assert.Equal(href, h);
+        Assert.Equal(media, m);
+    }
+
+    [Theory]
+    [InlineData("@import url(a.css) layer(1bad) screen;", "a.css", CssImportLayer.None, null, null, "layer(1bad) screen")]
+    [InlineData("@import url(a.css) supports(display: grid) layer(base);", "a.css", CssImportLayer.None, null, "display: grid", "layer(base)")]
+    public void GetImport_Leaves_Malformed_Or_OutOfOrder_Parts_In_Media(
+        string css,
+        string href,
+        CssImportLayer layer,
+        string? layerName,
+        string? supports,
+        string media)
+    {
+        var import = CssomRuleMetadata.GetImport((CssAtRule)ParseSingleRule(css));
+        Assert.Equal(href, import.Href);
+        Assert.Equal(layer, import.Layer);
+        Assert.Equal(layerName, import.LayerName);
+        Assert.Equal(supports, import.Supports);
+        Assert.Equal(media, import.Media);
+    }
+
+    [Theory]
+    [InlineData("base", true)]
+    [InlineData("reset", true)]
+    [InlineData("base.reset", true)]
+    [InlineData("a.b.c", true)]
+    [InlineData("-custom", true)]
+    [InlineData("--theme", true)]
+    [InlineData("_private", true)]
+    [InlineData("\\31 st", true)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData(null, false)]
+    [InlineData(".base", false)]
+    [InlineData("base.", false)]
+    [InlineData("base..reset", false)]
+    [InlineData("base . reset", false)]
+    [InlineData("base reset", false)]
+    [InlineData("1bad", false)]
+    [InlineData("-1bad", false)]
+    [InlineData("initial", false)]
+    [InlineData("inherit", false)]
+    [InlineData("unset", false)]
+    [InlineData("revert", false)]
+    [InlineData("revert-layer", false)]
+    [InlineData("default", false)]
+    [InlineData("base.initial", false)]
+    [InlineData("default.reset", false)]
+    public void CssLayerNameMetadata_Validates_Layer_Names(string? name, bool expectedValid)
+    {
+        Assert.Equal(expectedValid, CssLayerNameMetadata.IsValidLayerName(name));
+    }
+
+    [Theory]
+    [InlineData("base", true)]
+    [InlineData("-custom", true)]
+    [InlineData("--theme", true)]
+    [InlineData("_foo", true)]
+    [InlineData("\\31 st", true)]
+    [InlineData("base.reset", false)]
+    [InlineData("initial", false)]
+    [InlineData("default", false)]
+    [InlineData("1bad", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void CssLayerNameMetadata_Validates_Segments(string? segment, bool expectedValid)
+    {
+        Assert.Equal(expectedValid, CssLayerNameMetadata.IsValidSegment(segment));
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("   ", true)]
+    [InlineData("base", false)]
+    public void CssLayerNameMetadata_Identifies_Anonymous_Layers(string? name, bool expectedAnonymous)
+    {
+        Assert.Equal(expectedAnonymous, CssLayerNameMetadata.IsAnonymous(name));
+    }
+
+    [Fact]
+    public void CssLayerNameMetadata_Splits_And_Normalizes_Segments()
+    {
+        Assert.Equal(["base", "reset"], CssLayerNameMetadata.GetSegments("base.reset"));
+        Assert.Equal(["a", "b", "c"], CssLayerNameMetadata.GetSegments("a.b.c"));
+        Assert.Empty(CssLayerNameMetadata.GetSegments("invalid..name"));
+        Assert.Empty(CssLayerNameMetadata.GetSegments(null));
+
+        Assert.Equal("base.reset", CssLayerNameMetadata.NormalizeLayerName("base.reset"));
+        Assert.Equal("base.reset", CssLayerNameMetadata.NormalizeLayerName("\\62 ase.\\72 eset"));
+        Assert.Equal(string.Empty, CssLayerNameMetadata.NormalizeLayerName(""));
+    }
+
+    [Fact]
+    public void CssLayerNameMetadata_Parses_Statement_Layer_Names()
+    {
+        var names = CssLayerNameMetadata.ParseStatementLayerNames("reset, base, framework.grid;");
+        Assert.Equal(["reset", "base", "framework.grid"], names);
+
+        var withCommentsAndInvalid = CssLayerNameMetadata.ParseStatementLayerNames("reset, /* comment */ base, 1bad, theme;");
+        Assert.Equal(["reset", "base", "theme"], withCommentsAndInvalid);
+
+        Assert.Empty(CssLayerNameMetadata.ParseStatementLayerNames(null));
+        Assert.Empty(CssLayerNameMetadata.ParseStatementLayerNames("  ; "));
     }
 
     [Theory]

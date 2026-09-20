@@ -12,7 +12,7 @@ public sealed class CssParser
     {
         _diagnostics.Clear();
         var text = source ?? string.Empty;
-        var rules = ParseRules(text, 0);
+        var rules = ParseRules(text, 0, parentSelector: null, isTopLevel: true);
         return new CssStyleSheet(rules, _diagnostics);
     }
 
@@ -27,10 +27,12 @@ public sealed class CssParser
     // inside a nested conditional group (@media/@supports/...). Each style rule's selector
     // is then desugared against the parent (§"nest-desugaring"); at the top level it is
     // <see langword="null"/> and selectors are absolute.
-    private List<CssRule> ParseRules(string text, int sourceOffset, string? parentSelector = null)
+    private List<CssRule> ParseRules(string text, int sourceOffset, string? parentSelector = null, bool isTopLevel = false)
     {
         var rules = new List<CssRule>();
         var position = 0;
+        var allowImports = isTopLevel;
+        var sawImport = false;
         while (position < text.Length)
         {
             SkipTrivia(text, ref position);
@@ -40,9 +42,32 @@ public sealed class CssParser
             var ruleStart = position;
             if (text[position] == '@')
             {
-                rules.Add(ParseAtRule(text, ref position, sourceOffset, parentSelector));
+                var atRule = ParseAtRule(text, ref position, sourceOffset, parentSelector);
+                if (atRule.Name.Equals("import", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!allowImports || atRule.HasBlock)
+                    {
+                        AddDiagnostic(
+                            "CSS1005",
+                            atRule.HasBlock ? "@import rule cannot have a block." : "Misplaced @import rule was ignored.",
+                            CssDiagnosticSeverity.Warning,
+                            atRule.Range.Start,
+                            atRule.Range.Length);
+                        continue;
+                    }
+                    sawImport = true;
+                }
+                else if (atRule.HasBlock || (sawImport && atRule.Name.Equals("layer", StringComparison.OrdinalIgnoreCase)) ||
+                         (!atRule.Name.Equals("charset", StringComparison.OrdinalIgnoreCase) && !atRule.Name.Equals("layer", StringComparison.OrdinalIgnoreCase)))
+                {
+                    allowImports = false;
+                }
+
+                rules.Add(atRule);
                 continue;
             }
+
+            allowImports = false;
 
             var (Index, Character) = FindTopLevelDelimiter(text, position, '{', ';');
             if (Index < 0)
@@ -192,7 +217,7 @@ public sealed class CssParser
             // CSS Nesting §: a conditional group nested in a style rule carries the parent
             // selector down so its inner rules desugar against it (keyframes' percentage
             // selectors have no parent, so parentSelector stays inert there).
-            nestedRules = ParseRules(blockText, sourceOffset + blockStart, parentSelector);
+            nestedRules = ParseRules(blockText, sourceOffset + blockStart, parentSelector, isTopLevel: false);
 
         position = close + 1;
         return new CssAtRule(
@@ -284,7 +309,18 @@ public sealed class CssParser
             // the parent selector so its inner rules desugar, and flatten it out as a sibling.
             if (text[position] == '@')
             {
-                nestedRules.Add(ParseAtRule(text, ref position, sourceOffset, parentSelector));
+                var atRule = ParseAtRule(text, ref position, sourceOffset, parentSelector);
+                if (atRule.Name.Equals("import", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddDiagnostic(
+                        "CSS1005",
+                        atRule.HasBlock ? "@import rule cannot have a block." : "Misplaced @import rule was ignored.",
+                        CssDiagnosticSeverity.Warning,
+                        atRule.Range.Start,
+                        atRule.Range.Length);
+                    continue;
+                }
+                nestedRules.Add(atRule);
                 continue;
             }
 
