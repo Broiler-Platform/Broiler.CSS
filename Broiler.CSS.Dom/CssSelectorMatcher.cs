@@ -13,6 +13,48 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static readonly char[] AsciiWhitespace = [' ', '\t', '\n', '\r', '\f'];
     private static readonly Regex AttributePattern = AttributeRegex();
 
+    // Set by any step that answers from leniency rather than from knowledge, and read by TryMatch
+    // alone. Thread-static because one matcher serves every thread the style engine styles on, and
+    // a match runs to completion on the thread that started it.
+    [ThreadStatic]
+    private static bool _answeredLeniently;
+
+    /// <summary>
+    /// Whether <paramref name="element"/> genuinely matches <paramref name="selector"/>, for a
+    /// caller that must not act on a guess. The answer lands in <paramref name="matches"/> and is
+    /// meaningful only when this returns <see langword="true"/>; <see langword="false"/> means the
+    /// selector leant on something this matcher does not model, so no answer is available.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Matches"/> is deliberately lenient: a pseudo-class the specs define but this
+    /// matcher does not implement (<c>:read-only</c>, <c>:indeterminate</c>, <c>:host</c>, …) and
+    /// any vendor-prefixed name match every element, and a <c>::</c> pseudo-element is stripped so
+    /// its rule reaches the originating element. For the cascade that is the right trade — an
+    /// over-applied declaration beats a dropped one — but it makes a <c>true</c> from those paths
+    /// a guess rather than a fact. That distinction is invisible in a <see cref="bool"/>, which is
+    /// what this method adds.
+    /// </para>
+    /// <para>
+    /// Only leniency that actually decided the outcome counts. A selector is evaluated from the
+    /// subject leftwards and a logical combinator stops at its first hit, so an answer this reports
+    /// as knowable is one that no lenient step contributed to — <c>div:read-only &gt; p</c> against
+    /// a <c>span</c> is a plain "no", because it never got as far as the pseudo-class. An unknown
+    /// pseudo-class such as <c>:bogus</c> is knowable too: it is an invalid selector, and matching
+    /// nothing is the answer the specs give, not a guess.
+    /// </para>
+    /// </remarks>
+    public bool TryMatch(DomElement element, string selector, out bool matches, DomElement? scope = null)
+    {
+        _answeredLeniently = false;
+        matches = Matches(element, selector, scope);
+        if (!_answeredLeniently)
+            return true;
+
+        matches = false;
+        return false;
+    }
+
     public bool Matches(DomElement element, string selector, DomElement? scope = null)
     {
         ArgumentNullException.ThrowIfNull(element);
@@ -72,6 +114,10 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             return false;
 
         var compound = StripPseudoElement(source);
+        // Stripping it is what lets `div::before { … }` reach the div at all, and it is also the
+        // point at which this stops being able to say whether the element itself was selected.
+        if (compound.Length != source.Length)
+            _answeredLeniently = true;
 
         // Process pseudo-classes BEFORE stripping attributes. A functional pseudo's
         // argument can itself contain an attribute selector (e.g. the `[open]` in
@@ -130,6 +176,12 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                     }
                     else
                     {
+                        // Nothing this scanner models: a leading namespace separator, an escaped
+                        // type selector, the `||` column combinator that SplitParts leaves as its
+                        // own compound, the remains of an attribute selector the pattern did not
+                        // recognise. Skipping it is lenient in the same way an unmodelled
+                        // pseudo-class is, and is recorded the same way.
+                        _answeredLeniently = true;
                         index++;
                     }
                     break;
@@ -239,13 +291,29 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 // (the old `_ => true`) made the standard WPT "invalid selector is
                 // ignored" idiom — `:bogus { background: red }` — paint red on
                 // every element (CSS2 cascade/at-import-010 and siblings).
-                _ => name.StartsWith('-') || RecognizedPseudoClasses.Contains(name),
+                _ => MatchesUnmodeledPseudo(name),
             };
             if (!matches)
                 return false;
         }
 
         compound = RemovePseudos(compound, pseudos);
+        return true;
+    }
+
+    /// <summary>
+    /// The lenient arm of the pseudo-class switch: a name the specs define but this matcher does
+    /// not model, or any vendor-prefixed name, matches so that the cascade over-applies its rule
+    /// rather than dropping it — and records that it did, because that answer is a guess.
+    /// </summary>
+    private static bool MatchesUnmodeledPseudo(string name)
+    {
+        // An unknown name is not a guess: it is an invalid selector, and matching nothing is what
+        // the specs ask for.
+        if (!name.StartsWith('-') && !RecognizedPseudoClasses.Contains(name))
+            return false;
+
+        _answeredLeniently = true;
         return true;
     }
 
