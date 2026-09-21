@@ -85,6 +85,25 @@ public sealed class CssValueNumberFormTests
         Assert.Equal(CssLengthParser.IsValidLength(text), CssValueParser.TryParseNumeric(text, out _));
     }
 
+    /// <summary>
+    /// Reading the exponent lets a number overflow <see cref="double"/>, which it could not do
+    /// while the <c>e</c> fell to the unit and made the whole thing unparseable. The answer is
+    /// infinity rather than a rejection, which is both what the conversion gives and what
+    /// <c>CssLengthParser</c> has always given: a value outside the range is clamped, not invalid
+    /// (CSS Values 4 §11.1). Pinned because sharing the scan is what brought it here.
+    /// </summary>
+    [Theory]
+    [InlineData("1e999px", double.PositiveInfinity)]
+    [InlineData("-1e999px", double.NegativeInfinity)]
+    [InlineData("1e-999px", 0.0)]
+    public void An_Exponent_That_Overflows_Clamps_Rather_Than_Failing(string text, double number)
+    {
+        Assert.True(CssValueParser.TryParseNumeric(text, out var value));
+        Assert.Equal(CssUnit.Px, value.Unit);
+        Assert.Equal(number, value.Number);
+        Assert.True(CssLengthParser.IsValidLength(text));
+    }
+
     [Fact]
     public void Hsl_Channels_Read_An_Exponent_And_Reject_A_Trailing_Dot()
     {

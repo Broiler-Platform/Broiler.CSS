@@ -43,6 +43,12 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     /// pseudo-class such as <c>:bogus</c> is knowable too: it is an invalid selector, and matching
     /// nothing is the answer the specs give, not a guess.
     /// </para>
+    /// <para>
+    /// <paramref name="selector"/> is one complex selector, as it is for <see cref="Matches"/>: a
+    /// comma-separated list is not split here, and neither method reports one usefully. Split a
+    /// rule's prelude — <c>CssSelectorParser.Parse</c> or <c>CssSyntax.SplitTopLevel</c> does it —
+    /// and ask about each selector in turn.
+    /// </para>
     /// </remarks>
     public bool TryMatch(DomElement element, string selector, out bool matches, DomElement? scope = null)
     {
