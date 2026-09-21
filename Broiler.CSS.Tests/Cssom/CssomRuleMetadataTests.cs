@@ -101,6 +101,30 @@ public sealed class CssomRuleMetadataTests
         Assert.Equal(media, import.Media);
     }
 
+    /// <summary>
+    /// The prelude's parenthesis scan is <see cref="CssSyntax.FindMatching"/> now that the two
+    /// agree on <c>-1</c> for no match. A <c>layer(</c> or <c>supports(</c> that never closes is
+    /// still not a layer or a feature query, and what follows stays in the media list.
+    /// </summary>
+    [Theory]
+    [InlineData("@import url(a.css) layer(base", CssImportLayer.None, null, null, "layer(base")]
+    [InlineData("@import url(a.css) layer(base.reset screen", CssImportLayer.None, null, null, "layer(base.reset screen")]
+    [InlineData("@import url(a.css) supports(display: grid", CssImportLayer.None, null, null, "supports(display: grid")]
+    public void GetImport_Ignores_An_Unterminated_Layer_Or_Supports(
+        string css,
+        CssImportLayer layer,
+        string? layerName,
+        string? supports,
+        string media)
+    {
+        var import = CssomRuleMetadata.GetImport((CssAtRule)ParseSingleRule(css + ";"));
+        Assert.Equal("a.css", import.Href);
+        Assert.Equal(layer, import.Layer);
+        Assert.Equal(layerName, import.LayerName);
+        Assert.Equal(supports, import.Supports);
+        Assert.Equal(media, import.Media);
+    }
+
     [Theory]
     [InlineData("base", true)]
     [InlineData("reset", true)]

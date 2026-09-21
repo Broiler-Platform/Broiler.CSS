@@ -67,7 +67,11 @@ public static class CssSelectorParser
                     break;
                 case '[':
                     classes++;
-                    index = CssSyntax.FindMatching(compound, index, '[', ']') + 1;
+                    // An unterminated '[' swallows the rest of the compound: there is no further
+                    // simple selector after it, and advancing past the end is what keeps this loop
+                    // finite now that a failed search answers -1 rather than an index.
+                    var closeBracket = CssSyntax.FindMatching(compound, index, '[', ']');
+                    index = closeBracket < 0 ? compound.Length : closeBracket + 1;
                     typeAllowed = false;
                     break;
                 case ':':
@@ -80,8 +84,8 @@ public static class CssSelectorParser
                     if (index < compound.Length && compound[index] == '(')
                     {
                         var close = CssSyntax.FindMatching(compound, index, '(', ')');
-                        argument = close > index ? compound[(index + 1)..close] : compound[(index + 1)..];
-                        index = close >= index ? close + 1 : compound.Length;
+                        argument = close < 0 ? compound[(index + 1)..] : compound[(index + 1)..close];
+                        index = close < 0 ? compound.Length : close + 1;
                     }
 
                     if (pseudoElement || name is "before" or "after" or "first-line" or "first-letter")
@@ -133,6 +137,167 @@ public static class CssSelectorParser
         }
 
         return new CssSpecificity(ids, classes, types);
+    }
+
+    /// <summary>
+    /// Locates the compounds of one complex selector and the combinators between them, as offsets
+    /// into <paramref name="selector"/>. Nothing is re-serialised, because a caller rewriting one
+    /// compound needs the parts it leaves alone to come through character for character.
+    /// </summary>
+    /// <remarks>
+    /// A combinator missing a compound on one side — a leading <c>&gt;</c>, as a relative selector
+    /// has, or a trailing one in malformed text — is dropped, so the combinator count is always one
+    /// less than the compound count. A comment does not separate compounds, since it is not a token:
+    /// <c>div/* */.a</c> is one compound whose offsets simply span the comment.
+    /// </remarks>
+    internal static CssSelectorStructure AnalyzeStructure(string selector)
+    {
+        var compounds = new List<CssCompoundSelector>();
+        var combinators = new List<CssCombinator>();
+        var compoundStart = -1;
+        CssCombinator? pending = null;
+        var index = 0;
+
+        while (index < selector.Length)
+        {
+            if (selector[index] == '/' && index + 1 < selector.Length && selector[index + 1] == '*')
+            {
+                var commentEnd = selector.IndexOf("*/", index + 2, StringComparison.Ordinal);
+                index = commentEnd < 0 ? selector.Length : commentEnd + 2;
+                continue;
+            }
+
+            var combinator = CombinatorAt(selector, index, out var width);
+            if (combinator is { } separator)
+            {
+                if (compoundStart >= 0)
+                {
+                    compounds.Add(DescribeCompound(selector, compoundStart, index));
+                    compoundStart = -1;
+                }
+
+                // An explicit combinator outranks the white space around it, which is why the
+                // descendant answer only fills a gap that nothing else has claimed.
+                pending = separator == CssCombinator.Descendant ? pending ?? separator : separator;
+                index += width;
+                continue;
+            }
+
+            if (compoundStart < 0)
+            {
+                compoundStart = index;
+                if (compounds.Count > 0)
+                    combinators.Add(pending ?? CssCombinator.Descendant);
+                pending = null;
+            }
+
+            index = SkipCompoundUnit(selector, index);
+        }
+
+        if (compoundStart >= 0)
+            compounds.Add(DescribeCompound(selector, compoundStart, selector.Length));
+
+        return new CssSelectorStructure(compounds.AsReadOnly(), combinators.AsReadOnly());
+    }
+
+    private static CssCombinator? CombinatorAt(string selector, int index, out int width)
+    {
+        width = 1;
+        var character = selector[index];
+        if (char.IsWhiteSpace(character))
+            return CssCombinator.Descendant;
+
+        switch (character)
+        {
+            case '>':
+                return CssCombinator.Child;
+            case '+':
+                return CssCombinator.NextSibling;
+            case '~':
+                return CssCombinator.SubsequentSibling;
+            // Doubled, this is the column combinator; alone it is the namespace separator and
+            // belongs to the compound it sits in.
+            case '|' when index + 1 < selector.Length && selector[index + 1] == '|':
+                width = 2;
+                return CssCombinator.Column;
+            default:
+                return null;
+        }
+    }
+
+    private static CssCompoundSelector DescribeCompound(string selector, int start, int end) =>
+        new(start, end - start, TypeSelectorEnd(selector, start, end), PseudoElementStart(selector, start, end));
+
+    private static int TypeSelectorEnd(string selector, int start, int end)
+    {
+        var index = start;
+        if (index < end && selector[index] == '*')
+            index++;
+        else if (index < end && StartsName(selector[index]))
+            index = Math.Min(ConsumeName(selector, index), end);
+        else if (index >= end || selector[index] != '|')
+            return start;
+
+        // `ns|type`, `*|type` and `|type` are all one type selector. The `=` test keeps an
+        // attribute operator out of it, which a compound cannot really lead with but costs a char.
+        if (index < end && selector[index] == '|' && (index + 1 >= end || selector[index + 1] != '='))
+        {
+            index++;
+            if (index < end && selector[index] == '*')
+                index++;
+            else if (index < end && StartsName(selector[index]))
+                index = Math.Min(ConsumeName(selector, index), end);
+        }
+
+        return index;
+    }
+
+    private static int PseudoElementStart(string selector, int start, int end)
+    {
+        var index = start;
+        while (index < end)
+        {
+            if (selector[index] == ':' && index + 1 < end && selector[index + 1] == ':')
+                return index;
+            index = SkipCompoundUnit(selector, index);
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Advances past one unit of a compound. A string, a bracketed or parenthesised group and an
+    /// escape are each skipped whole, which is what keeps the <c>~</c> of <c>[a~="b"]</c>, the
+    /// <c>+</c> of <c>:nth-child(2n+1)</c> and the space of <c>.a\ b</c> from reading as
+    /// combinators.
+    /// </summary>
+    private static int SkipCompoundUnit(string selector, int index) => selector[index] switch
+    {
+        '"' or '\'' => SkipString(selector, index),
+        '[' => SkipBracketed(selector, index, '[', ']'),
+        '(' => SkipBracketed(selector, index, '(', ')'),
+        '\\' => ConsumeEscape(selector, index),
+        _ => index + 1,
+    };
+
+    private static int SkipBracketed(string selector, int index, char open, char close)
+    {
+        // An unterminated group runs to the end of the selector, which is what FindMatching's -1
+        // says has happened.
+        var closeIndex = CssSyntax.FindMatching(selector, index, open, close);
+        return closeIndex < 0 ? selector.Length : closeIndex + 1;
+    }
+
+    private static int SkipString(string selector, int index)
+    {
+        var quote = selector[index];
+        for (var i = index + 1; i < selector.Length; i++)
+        {
+            if (selector[i] == '\\')
+                i++;
+            else if (selector[i] == quote)
+                return i + 1;
+        }
+        return selector.Length;
     }
 
     private static IEnumerable<string> SplitCompounds(string selector)
@@ -410,6 +575,8 @@ public static class CssSelectorParser
 
     private static bool IsNameStart(char character) =>
         char.IsLetter(character) || character is '_' or '-' || character >= 0x80;
+
+    private static bool StartsName(char character) => IsNameStart(character) || character == '\\';
 
     private static bool IsNameCharacter(char character) =>
         IsNameStart(character) || char.IsDigit(character);

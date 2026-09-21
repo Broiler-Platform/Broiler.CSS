@@ -1097,34 +1097,55 @@ public static class CssLengthParser
     {
         value = 0;
         text = text.Trim();
+        return TryScanCssNumber(text, out var length)
+            && length == text.Length
+            && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
+
+    /// <summary>
+    /// Measures the CSS <c>&lt;number&gt;</c> (CSS Syntax 3 §4.3.12) that <paramref name="text"/>
+    /// starts with, reporting its length in <paramref name="length"/>. Leading white space is not
+    /// tolerated here; what follows the number is left to the caller.
+    /// </summary>
+    /// <remarks>
+    /// The scan never consumes a code point that is not part of the number, which is what lets
+    /// <see cref="CssValueParser.TryParseNumeric"/> take the rest as a unit: <c>1e2px</c> is the
+    /// number <c>1e2</c> and the unit <c>px</c>, while <c>1em</c> is the number <c>1</c> and the
+    /// unit <c>em</c>, because <c>em</c> is not a well-formed exponent. Both parsers scan here so
+    /// that a form cannot be a number to one of them and not to the other.
+    /// </remarks>
+    internal static bool TryScanCssNumber(ReadOnlySpan<char> text, out int length)
+    {
+        length = 0;
         var index = 0;
         if (index < text.Length && text[index] is '+' or '-')
             index++;
 
         var integerDigits = CountAsciiDigits(text, ref index);
         var fractionDigits = 0;
-        if (index < text.Length && text[index] == '.')
+        if (index + 1 < text.Length && text[index] == '.' && char.IsAsciiDigit(text[index + 1]))
         {
             index++;
             fractionDigits = CountAsciiDigits(text, ref index);
-            if (fractionDigits == 0)
-                return false;
         }
 
         if (integerDigits == 0 && fractionDigits == 0)
             return false;
 
-        if (index < text.Length && text[index] is 'e' or 'E')
+        // The exponent joins the number only when it is complete, so a lone 'e' stays behind for
+        // the unit rather than failing the scan.
+        var afterExponent = index;
+        if (afterExponent < text.Length && text[afterExponent] is 'e' or 'E')
         {
-            index++;
-            if (index < text.Length && text[index] is '+' or '-')
-                index++;
-            if (CountAsciiDigits(text, ref index) == 0)
-                return false;
+            afterExponent++;
+            if (afterExponent < text.Length && text[afterExponent] is '+' or '-')
+                afterExponent++;
+            if (CountAsciiDigits(text, ref afterExponent) > 0)
+                index = afterExponent;
         }
 
-        return index == text.Length
-            && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        length = index;
+        return true;
     }
 
     private static int CountAsciiDigits(ReadOnlySpan<char> text, ref int index)

@@ -56,35 +56,13 @@ public static class CssValueParser
         if (string.IsNullOrWhiteSpace(text))
             return false;
 
+        // The number is scanned by CssLengthParser's scanner, the one this package already agrees
+        // with about the CSS <number> grammar (CSS Syntax 3 §4.3.12): an exponent belongs to the
+        // number (1e2px is 100px) and a bare trailing dot does not (1.px is not a length). Only
+        // splitting the unit off the end is this parser's own work.
         var input = text.Trim();
-        var numberEnd = 0;
-        if (numberEnd < input.Length && input[numberEnd] is '+' or '-')
-            numberEnd++;
-
-        var sawDigit = false;
-        var sawDot = false;
-        while (numberEnd < input.Length)
-        {
-            var character = input[numberEnd];
-            if (char.IsDigit(character))
-            {
-                sawDigit = true;
-                numberEnd++;
-                continue;
-            }
-
-            if (character == '.' && !sawDot)
-            {
-                sawDot = true;
-                numberEnd++;
-                continue;
-            }
-
-            break;
-        }
-
-        if (!sawDigit ||
-            !double.TryParse(input[..numberEnd], NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+        if (!CssLengthParser.TryScanCssNumber(input, out var numberEnd) ||
+            !double.TryParse(input.AsSpan(0, numberEnd), NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
         {
             return false;
         }

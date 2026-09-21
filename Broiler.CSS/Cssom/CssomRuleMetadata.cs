@@ -166,7 +166,7 @@ public static class CssomRuleMetadata
             var afterKeyword = i + "layer".Length;
             if (afterKeyword < text.Length && text[afterKeyword] == '(')
             {
-                var close = FindMatchingParenthesis(text, afterKeyword);
+                var close = CssSyntax.FindMatching(text, afterKeyword, '(', ')');
                 if (close >= 0)
                 {
                     var inner = text[(afterKeyword + 1)..close];
@@ -192,7 +192,7 @@ public static class CssomRuleMetadata
             var afterSupports = i + "supports".Length;
             if (afterSupports < text.Length && text[afterSupports] == '(')
             {
-                var close = FindMatchingParenthesis(text, afterSupports);
+                var close = CssSyntax.FindMatching(text, afterSupports, '(', ')');
                 if (close >= 0)
                 {
                     supports = text[(afterSupports + 1)..close].Trim();
@@ -361,57 +361,6 @@ public static class CssomRuleMetadata
             break;
         }
         return i;
-    }
-
-    private static int FindMatchingParenthesis(string text, int openParen)
-    {
-        var depth = 0;
-        char quote = '\0';
-        for (var i = openParen; i < text.Length; i++)
-        {
-            var c = text[i];
-            if (quote != '\0')
-            {
-                if (c == '\\')
-                    i++;
-                else if (c == quote)
-                    quote = '\0';
-                continue;
-            }
-
-            if (c is '"' or '\'')
-            {
-                quote = c;
-                continue;
-            }
-
-            if (CssSyntax.IsValidEscape(text, i))
-            {
-                i++;
-                continue;
-            }
-
-            if (c == '/' && i + 1 < text.Length && text[i + 1] == '*')
-            {
-                var commentEnd = text.IndexOf("*/", i + 2, StringComparison.Ordinal);
-                if (commentEnd < 0)
-                    return -1;
-                i = commentEnd + 1;
-                continue;
-            }
-
-            if (c == '(')
-            {
-                depth++;
-            }
-            else if (c == ')')
-            {
-                depth--;
-                if (depth == 0)
-                    return i;
-            }
-        }
-        return -1;
     }
 
     /// <summary>Decomposes an <c>@namespace</c> prelude into its optional prefix and URI.</summary>
