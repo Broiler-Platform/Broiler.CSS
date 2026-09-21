@@ -67,7 +67,11 @@ public static class CssSelectorParser
                     break;
                 case '[':
                     classes++;
-                    index = CssSyntax.FindMatching(compound, index, '[', ']') + 1;
+                    // An unterminated '[' swallows the rest of the compound: there is no further
+                    // simple selector after it, and advancing past the end is what keeps this loop
+                    // finite now that a failed search answers -1 rather than an index.
+                    var closeBracket = CssSyntax.FindMatching(compound, index, '[', ']');
+                    index = closeBracket < 0 ? compound.Length : closeBracket + 1;
                     typeAllowed = false;
                     break;
                 case ':':
@@ -80,8 +84,8 @@ public static class CssSelectorParser
                     if (index < compound.Length && compound[index] == '(')
                     {
                         var close = CssSyntax.FindMatching(compound, index, '(', ')');
-                        argument = close > index ? compound[(index + 1)..close] : compound[(index + 1)..];
-                        index = close >= index ? close + 1 : compound.Length;
+                        argument = close < 0 ? compound[(index + 1)..] : compound[(index + 1)..close];
+                        index = close < 0 ? compound.Length : close + 1;
                     }
 
                     if (pseudoElement || name is "before" or "after" or "first-line" or "first-letter")

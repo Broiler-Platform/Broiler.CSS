@@ -84,6 +84,18 @@ public static class CssSyntax
         yield return text[start..];
     }
 
+    /// <summary>
+    /// Finds the <paramref name="close"/> that matches the <paramref name="open"/> at
+    /// <paramref name="openingIndex"/>, counting nesting and ignoring anything inside a string, an
+    /// escape or a comment, and returns <c>-1</c> when the text ends first.
+    /// </summary>
+    /// <remarks>
+    /// The failure answer used to be <c>text.Length - 1</c>, which is a valid index into every
+    /// non-empty input, so the <c>index &lt; 0</c> test every caller writes on a search never fired
+    /// and an unterminated <c>translateY(</c> handed back the rest of the string as its argument.
+    /// The four private copies of this scan in this repository all answered <c>-1</c>; this one now
+    /// agrees with them.
+    /// </remarks>
     public static int FindMatching(string text, int openingIndex, char open, char close)
     {
         var depth = 0;
@@ -114,7 +126,7 @@ public static class CssSyntax
             {
                 var commentEnd = text.IndexOf("*/", index + 2, StringComparison.Ordinal);
                 if (commentEnd < 0)
-                    return text.Length - 1;
+                    return -1;
                 index = commentEnd + 1;
                 continue;
             }
@@ -124,7 +136,7 @@ public static class CssSyntax
             else if (character == close && --depth == 0)
                 return index;
         }
-        return text.Length - 1;
+        return -1;
     }
 
     public static string RemoveComments(string text)
