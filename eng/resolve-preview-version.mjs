@@ -84,17 +84,10 @@ async function main() {
   const configured = packages[0].PackageVersion;
   parsePreview(configured);
   const packageIds = packages.map(p => p.PackageId);
-  const target = process.env.TARGET || 'nuget';
-  if (!['nuget', 'github'].includes(target)) throw new Error(`Unknown target '${target}'.`);
-  // NuGet.org is the baseline even when publishing to GitHub Packages.
+  // Every preview of every package counts, so the release moves past the highest one
+  // ever used on the line. The configured version is the floor that carries numbers
+  // spent outside nuget.org (the retired GitHub Packages feed).
   const published = await readVersions('https://api.nuget.org/v3/index.json', packageIds);
-  if (target === 'github') {
-    const { GITHUB_REPOSITORY_OWNER: owner, GITHUB_ACTOR: actor, GITHUB_TOKEN: token } = process.env;
-    if (!owner || !actor || !token) throw new Error('GitHub feed lookup requires owner, actor, and token.');
-    const authorization = `Basic ${Buffer.from(`${actor}:${token}`).toString('base64')}`;
-    published.push(...await readVersions(
-      `https://nuget.pkg.github.com/${owner}/index.json`, packageIds, { authorization }));
-  }
   const tag = process.env.GITHUB_EVENT_NAME === 'push'
     ? (process.env.GITHUB_REF || '').replace(/^refs\/tags\//, '') : '';
   if (process.env.GITHUB_EVENT_NAME === 'push' && !tag.startsWith('v')) {
@@ -103,7 +96,7 @@ async function main() {
   const version = chooseVersion(configured, published, {
     suffix: process.env.VERSION_SUFFIX || '', tag,
   });
-  console.log(`Version: ${version} -> ${target} (${packageIds.length} packages; dry-run: ${process.env.DRY_RUN ?? 'true'})`);
+  console.log(`Version: ${version} -> nuget.org (${packageIds.length} packages; dry-run: ${process.env.DRY_RUN ?? 'true'})`);
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT,
       `version=${version}\nversion_args=-p:Version=${version} -p:PackageVersion=${version}\n`);

@@ -1,9 +1,6 @@
-# Prove that a consumer can restore the complete release using its destination feed.
+# Prove that a consumer can restore the complete release with nuget.org as its only other feed.
 [CmdletBinding()]
-param(
-    [Parameter(Mandatory)][ValidateSet('github', 'nuget')][string] $Target,
-    [string] $Packages = 'artifacts'
-)
+param([string] $Packages = 'artifacts')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -26,14 +23,6 @@ foreach ($archive in $archives) {
         $mappings += "      <package pattern=`"$id`" />"
     } finally { $zip.Dispose() }
 }
-$githubSource = ''
-$githubMapping = ''
-if ($Target -eq 'github') {
-    $owner = if ($env:GITHUB_REPOSITORY_OWNER) { $env:GITHUB_REPOSITORY_OWNER } else { 'Broiler-Platform' }
-    $owner = [Security.SecurityElement]::Escape($owner)
-    $githubSource = "<add key=`"broiler-github`" value=`"https://nuget.pkg.github.com/$owner/index.json`" />"
-    $githubMapping = '<packageSource key="broiler-github"><package pattern="Broiler.*" /></packageSource>'
-}
 $escapedPath = [Security.SecurityElement]::Escape($packagePath)
 @"
 <configuration>
@@ -41,7 +30,6 @@ $escapedPath = [Security.SecurityElement]::Escape($packagePath)
     <clear />
     <add key="release" value="$escapedPath" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-    $githubSource
   </packageSources>
   <disabledPackageSources><clear /></disabledPackageSources>
   <packageSourceMapping>
@@ -50,7 +38,6 @@ $escapedPath = [Security.SecurityElement]::Escape($packagePath)
 $($mappings -join "`n")
     </packageSource>
     <packageSource key="nuget.org"><package pattern="*" /></packageSource>
-    $githubMapping
   </packageSourceMapping>
 </configuration>
 "@ | Set-Content (Join-Path $scratch 'NuGet.config') -Encoding utf8
@@ -67,5 +54,5 @@ $($references -join "`n")
 "@ | Set-Content (Join-Path $scratch 'Consumer.csproj') -Encoding utf8
 # An isolated cache prevents installed developer packages from hiding feed gaps.
 & dotnet restore (Join-Path $scratch 'Consumer.csproj') --configfile (Join-Path $scratch 'NuGet.config') --packages (Join-Path $scratch 'packages') --no-http-cache --nologo
-if ($LASTEXITCODE -ne 0) { throw "Consumer restore from $Target failed. Check feed access and publish missing dependencies first. Diagnostics: $scratch" }
-Write-Host "Consumer restore verified $($archives.Count) packages against $Target."
+if ($LASTEXITCODE -ne 0) { throw "Consumer restore from nuget.org failed. Publish missing dependencies there first. Diagnostics: $scratch" }
+Write-Host "Consumer restore verified $($archives.Count) packages against nuget.org."

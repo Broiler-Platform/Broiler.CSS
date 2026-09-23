@@ -14,12 +14,9 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 env:
   PACKAGE_VERSION: ${{ inputs.package-version }}
-  # Broiler.Dom restores from GitHub Packages, which needs credentials even for public packages.
-  NuGetPackageSourceCredentials_broiler-github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
