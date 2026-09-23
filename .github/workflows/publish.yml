@@ -43,7 +43,7 @@ jobs:
       - name: Require a NuGet.org API key
         if: env.DRY_RUN != 'true'
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ secrets.NUGET_TOKEN }}
         run: |
           if [ -z "$NUGET_API_KEY" ]; then
             echo "::error::Publishing to nuget.org needs the NUGET_API_KEY repository secret."
@@ -89,7 +89,7 @@ jobs:
       - name: Push to nuget.org
         if: env.DRY_RUN != 'true'
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ secrets.NUGET_TOKEN }}
         run: >
           dotnet nuget push 'artifacts/*.nupkg'
           --source https://api.nuget.org/v3/index.json
