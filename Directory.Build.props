@@ -7,6 +7,15 @@
   <PropertyGroup>
     <PackageProjectUrl>https://github.com/Broiler-Platform/Broiler.CSS</PackageProjectUrl>
     <PackageTags>broiler;css;selectors;cascade;parser</PackageTags>
+
+    <!--
+      First preview number the Publish workflow may use. The retired GitHub Packages
+      feed already spent 0.1.0-preview.1 through preview.6 on these package IDs, and
+      nuget.org cannot see that feed, so this floor keeps nuget.org from reusing them.
+      The resolver takes the higher of this floor and the next number after every
+      preview already on nuget.org; it never needs lowering.
+    -->
+    <VersionSuffix>preview.7</VersionSuffix>
   </PropertyGroup>
 
 </Project>
