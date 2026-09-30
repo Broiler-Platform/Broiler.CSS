@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "component": "Broiler.CSS",
+  "projects": [
+    "Broiler.CSS/Broiler.CSS.csproj",
+    "Broiler.CSS.Dom/Broiler.CSS.Dom.csproj"
+  ],
+  "exemptionPredicate": "owning-component",
+  "exclude": [],
+  "spdx": {
+    "copyright": ["2026 Broiler Platform contributors"],
+    "license": "Apache-2.0"
+  },
+  // Ported from HTML Renderer (BSD-3-Clause) through Broiler.HTML: added to this
+  // component in 1c9ef46 from Broiler.HTML's CssConstants, RegexParserUtils,
+  // CssLength and CssValueParser. The copyright lines are those of
+  // Broiler.HTML/LICENSES/HTML-Renderer-BSD-3-Clause.txt.
+  "spdxOverrides": [
+    {
+      "glob": "Broiler.CSS/CssConstants.cs",
+      "copyright": ["2026 Broiler Platform contributors", "2009 José Manuel Menéndez Poo", "2013-2025 Arthur Teplitzki"],
+      "license": "Apache-2.0 AND BSD-3-Clause"
+    },
+    {
+      "glob": "Broiler.CSS/RegexParserUtils.cs",
+      "copyright": ["2026 Broiler Platform contributors", "2009 José Manuel Menéndez Poo", "2013-2025 Arthur Teplitzki"],
+      "license": "Apache-2.0 AND BSD-3-Clause"
+    },
+    {
+      "glob": "Broiler.CSS/CssLength.cs",
+      "copyright": ["2026 Broiler Platform contributors", "2009 José Manuel Menéndez Poo", "2013-2025 Arthur Teplitzki"],
+      "license": "Apache-2.0 AND BSD-3-Clause"
+    },
+    {
+      "glob": "Broiler.CSS/CssLengthParser.cs",
+      "copyright": ["2026 Broiler Platform contributors", "2009 José Manuel Menéndez Poo", "2013-2025 Arthur Teplitzki"],
+      "license": "Apache-2.0 AND BSD-3-Clause"
+    }
+  ],
+  // HUMAN_REVIEW.md is a hand-written, revision-scoped review record; the
+  // generated per-unit record goes beside it.
+  "artefacts": {
+    "report": "CODE-ASSURANCE.md",
+    "humanReview": "HUMAN_REVIEW.units.md",
+    "manifest": "assurance.manifest.json"
+  },
+  "forbidDirectives": false,
+  "forgeryVocabulary": "narrow",
+  "regenerateCommand": "dotnet run --project Broiler.Code/src/Broiler.Code.Review.Cli -c Release -- assurance generate --root Broiler.CSS"
+}
