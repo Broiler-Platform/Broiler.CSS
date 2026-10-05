@@ -58,11 +58,13 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     // by all threads — so each result is keyed by the mode it was computed under. Keying rather than
     // invalidating on a mode change is the point: two threads styling in different modes at once
     // would otherwise keep reading each other's results between invalidations.
-    private readonly record struct RenderMode(bool QuirksMode, int PageWidth, int PageHeight)
+    // A visited link's visited style is a cascade of its own (CssVisitedLinkMatching), keyed apart like
+    // the others; the rule index does not depend on it, so it is built without it.
+    private readonly record struct RenderMode(bool QuirksMode, int PageWidth, int PageHeight, bool VisitedLinks)
     {
         public static RenderMode Current => CssPagedMedia.Active
-            ? new RenderMode(CssDocumentMode.QuirksMode, CssPagedMedia.Width, CssPagedMedia.Height)
-            : new RenderMode(CssDocumentMode.QuirksMode, 0, 0);
+            ? new RenderMode(CssDocumentMode.QuirksMode, CssPagedMedia.Width, CssPagedMedia.Height, CssVisitedLinkMatching.Active)
+            : new RenderMode(CssDocumentMode.QuirksMode, 0, 0, CssVisitedLinkMatching.Active);
     }
 
     private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, RenderMode Mode), CssComputedStyle> _cache = new();
@@ -361,11 +363,120 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         var generation = CaptureCacheGeneration();
         var computed = ComputeCascadedStyle(key.element, key.Item2, [], key.includeInlineStyle);
 
+        // A visited link, and what is inside it, take their colours from the visited style.
+        if (!CssVisitedLinkMatching.Active && IsInsideVisitedLink(element))
+        {
+            Dictionary<string, string> visited;
+            using (CssVisitedLinkMatching.Enter())
+                visited = ComputeCascadedStyle(key.element, key.Item2, [], key.includeInlineStyle);
+
+            TakeVisitedColors(computed, visited);
+        }
+
         // Same guard as GetCascadedDeclarationMap, and for the same reason: selector matching can
         // call back into the host mid-cascade and re-sync the stylesheets, so a result derived from
         // the pre-re-sync sheets must not be published.
         StoreIfCurrent(_cascadedStyleCache, key, computed, generation);
         return computed;
+    }
+
+    // ───────────────── :visited ─────────────────
+    //
+    // Chromium styles a visited link twice. Its style -- the one getComputedStyle, querySelector and
+    // every other query answer from -- is computed as if no link were visited. A visited link and
+    // everything inside it also get a visited style, computed with :visited matching that link and
+    // :link not (CssVisitedLinkMatching), and only its colours are painted: a page cannot make a
+    // visited link bigger, bolder or a different shape, so it cannot find out which links are visited
+    // by measuring them. Only GetCascadedStyle, the renderer's cascade, does this, and only for a link a
+    // renderer's provider reports visited (CssElementState.Visited).
+
+    /// <summary>The properties a visited link takes from its visited style: Chromium's visited-dependent colours.</summary>
+    private static readonly string[] VisitedDependentProperties =
+    [
+        "color", "background-color",
+        "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
+        "border-block-start-color", "border-block-end-color", "border-inline-start-color", "border-inline-end-color",
+        "outline-color", "column-rule-color", "text-decoration-color", "text-emphasis-color", "caret-color",
+        "fill", "stroke", "-webkit-text-fill-color", "-webkit-text-stroke-color",
+    ];
+
+    /// <summary>
+    /// Whether <paramref name="element"/> is a visited link or inside one: whether the nearest link that
+    /// is it or one of its ancestors is one the provider reports visited.
+    /// </summary>
+    private bool IsInsideVisitedLink(DomElement element)
+    {
+        if (stateProvider is null)
+            return false;
+
+        for (var current = element; current is not null; current = current.ParentElement)
+        {
+            if (CssSelectorMatcher.IsLink(current))
+                return (stateProvider.GetElementState(current) & CssElementState.Visited) != 0;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Replaces the colours of <paramref name="unvisited"/>, a visited link's style, with those of its
+    /// visited style, as Chromium paints them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A colour the visited style leaves undeclared is undeclared here too, so it is inherited or
+    /// initial as in the visited style: a page that styles only <c>a:link</c> leaves its visited links
+    /// the colour the user agent's <c>:visited</c> rule gives them, or their parent's.
+    /// </para>
+    /// <para>
+    /// A visited colour keeps the alpha of the unvisited one, so <c>:visited</c> cannot show what the
+    /// link's own style hides: <c>a:visited { background-color: yellow }</c> paints nothing over a link
+    /// whose background is transparent. And a visited background left transparent, or not declared,
+    /// is the unvisited one -- Chromium's own exception, so that the rule above does not paint every
+    /// visited link with a background black.
+    /// </para>
+    /// </remarks>
+    private static void TakeVisitedColors(Dictionary<string, string> unvisited, Dictionary<string, string> visited)
+    {
+        foreach (var property in VisitedDependentProperties)
+        {
+            unvisited.TryGetValue(property, out var unvisitedValue);
+            var isBackground = property == "background-color";
+
+            if (!visited.TryGetValue(property, out var visitedValue))
+            {
+                if (!isBackground)
+                    unvisited.Remove(property);
+                continue;
+            }
+
+            if (isBackground && CssValueParser.TryParseColor(visitedValue, out var background) && background == default)
+                continue;
+
+            unvisited[property] = WithAlphaOf(visitedValue, unvisitedValue, isBackground);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="visitedValue"/> with the alpha of <paramref name="unvisitedValue"/>: of an
+    /// undeclared background, which is transparent, or else opaque when it is not a colour this can
+    /// read (<c>currentcolor</c>, an inherited colour).
+    /// </summary>
+    private static string WithAlphaOf(string visitedValue, string? unvisitedValue, bool isBackground)
+    {
+        if (!CssValueParser.TryParseColor(visitedValue, out var visitedColor))
+            return visitedValue;
+
+        var alpha = unvisitedValue is null
+            ? (isBackground ? (byte)0 : (byte)255)
+            : CssValueParser.TryParseColor(unvisitedValue, out var unvisitedColor) ? unvisitedColor.Alpha : (byte)255;
+
+        if (alpha == visitedColor.Alpha)
+            return visitedValue;
+
+        return alpha == 255
+            ? FormattableString.Invariant($"rgb({visitedColor.Red}, {visitedColor.Green}, {visitedColor.Blue})")
+            : FormattableString.Invariant($"rgba({visitedColor.Red}, {visitedColor.Green}, {visitedColor.Blue}, {Math.Round(alpha / 255.0, 3)})");
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyReadOnlyMap =
@@ -787,6 +898,9 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     /// </remarks>
     private CssCascadeRuleIndex GetOrBuildRuleIndex(RenderMode mode)
     {
+        // Which rules a sheet holds does not depend on whether :visited matches, so the visited
+        // cascade shares the index built for the rest.
+        mode = mode with { VisitedLinks = false };
         if (_ruleIndexGeneration != _sheetGeneration)
         {
             _ruleIndexes.Clear();

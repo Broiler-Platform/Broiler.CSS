@@ -292,6 +292,305 @@ public sealed class CssSelectorMatcherTests
             ReferenceEquals(element, checkedElement);
     }
 
+    // :target is the element the provider, or without one the markup, reports as its document's target.
+    [Fact]
+    public void Matches_Target_From_The_State_Provider_Or_The_Markup()
+    {
+        var tree = CreateTree();
+        var live = new CssSelectorMatcher(new ElementStateProvider { States = { [tree.Note] = CssElementState.Target } });
+        Assert.True(live.Matches(tree.Note, "span:target"));
+        Assert.False(live.Matches(tree.First, ":target"));
+        Assert.False(live.Matches(tree.Note, ":target-within"));
+
+        tree.Second.SetAttribute(CssElementStateMarkup.AttributeName, "target");
+        Assert.True(new CssSelectorMatcher().Matches(tree.Second, ":target"));
+        Assert.False(live.Matches(tree.Second, ":target"));
+        Assert.False(new CssSelectorMatcher().Matches(tree.First, ":target"));
+    }
+
+    // :popover-open and :modal are states only a script or the user puts an element in, as the provider,
+    // or without one the markup, reports them. Both matched every element, so a closed popover was never
+    // [popover]:not(:popover-open) -- the rule that hides it -- and every element was :modal.
+    [Fact]
+    public void Matches_Popover_Open_And_Modal_From_The_State_Provider_Or_The_Markup()
+    {
+        var document = new DomDocument();
+        var body = document.CreateElement("body");
+        var shown = document.CreateElement("div");
+        shown.SetAttribute("popover", "");
+        var closed = document.CreateElement("div");
+        closed.SetAttribute("popover", "");
+        var modal = document.CreateElement("dialog");
+        modal.SetAttribute("open", "");
+        var open = document.CreateElement("dialog");
+        open.SetAttribute("open", "");
+        document.AppendChild(body);
+        body.AppendChild(shown);
+        body.AppendChild(closed);
+        body.AppendChild(modal);
+        body.AppendChild(open);
+
+        var live = new CssSelectorMatcher(new ElementStateProvider
+        {
+            States = { [shown] = CssElementState.PopoverOpen, [modal] = CssElementState.Modal },
+        });
+        Assert.True(live.Matches(shown, "[popover]:popover-open"));
+        Assert.True(live.Matches(closed, "[popover]:not(:popover-open)"));
+        Assert.False(live.Matches(body, ":popover-open"));
+        Assert.True(live.Matches(modal, "dialog:modal"));
+        Assert.False(live.Matches(open, ":modal"));
+        Assert.False(live.Matches(body, ":modal"));
+
+        closed.SetAttribute(CssElementStateMarkup.AttributeName, "popover-open");
+        open.SetAttribute(CssElementStateMarkup.AttributeName, "modal");
+        var still = new CssSelectorMatcher();
+        Assert.True(still.Matches(closed, ":popover-open"));
+        Assert.True(still.Matches(open, ":modal"));
+        Assert.False(still.Matches(shown, ":popover-open"));
+        Assert.False(still.Matches(body, ":modal"));
+
+        Assert.Equal("popover-open modal", CssElementStateMarkup.Format(CssElementState.PopoverOpen | CssElementState.Modal));
+        Assert.Equal(CssElementState.PopoverOpen | CssElementState.Modal, CssElementStateMarkup.Parse("modal popover-open"));
+    }
+
+    // :valid and :invalid judge the value the provider reports -- what the user typed or a script set
+    // -- and its checkedness, rather than the markup's.
+    [Fact]
+    public void Judges_Validity_On_The_Live_Value()
+    {
+        var (document, form) = NewForm();
+        var email = Control(document, form, "input", ("type", "email"), ("value", "a@b.c"));
+        var notes = Control(document, form, "textarea", ("required", ""));
+        var choice = Control(document, form, "select", ("required", ""));
+        var empty = document.CreateElement("option");
+        empty.SetAttribute("value", "");
+        empty.SetAttribute("selected", "");
+        choice.AppendChild(empty);
+        var agree = Control(document, form, "input", ("type", "checkbox"), ("required", ""));
+
+        var still = new CssSelectorMatcher();
+        Assert.True(still.Matches(email, ":valid"));
+        Assert.True(still.Matches(notes, ":invalid"));
+        Assert.True(still.Matches(choice, ":invalid"));
+        Assert.True(still.Matches(agree, ":invalid"));
+
+        var live = new CssSelectorMatcher(new ElementStateProvider
+        {
+            Values = { [email] = "nope", [notes] = "typed", [choice] = "x" },
+            Checked = { [agree] = true },
+        });
+        Assert.True(live.Matches(email, ":invalid"));
+        Assert.True(live.Matches(notes, ":valid"));
+        Assert.True(live.Matches(choice, ":valid"));
+        Assert.True(live.Matches(agree, ":valid"));
+        Assert.True(live.Matches(form, ":invalid"));
+    }
+
+    // minlength and maxlength judge only a value the user edited, as HTML's "too short" and "too long" do.
+    [Fact]
+    public void Judges_Length_Only_For_A_Value_The_User_Edited()
+    {
+        var (document, form) = NewForm();
+        var shortField = Control(document, form, "input", ("minlength", "5"));
+        var longField = Control(document, form, "input", ("type", "search"), ("maxlength", "3"));
+        var notes = Control(document, form, "textarea", ("minlength", "4"));
+        var number = Control(document, form, "input", ("type", "number"), ("minlength", "5"));
+
+        var provider = new ElementStateProvider
+        {
+            Values = { [shortField] = "abc", [longField] = "abcd", [notes] = "ab", [number] = "12" },
+        };
+        var live = new CssSelectorMatcher(provider);
+        Assert.True(live.Matches(shortField, ":valid"));
+        Assert.True(live.Matches(longField, ":valid"));
+        Assert.True(live.Matches(notes, ":valid"));
+
+        foreach (var field in new[] { shortField, longField, notes, number })
+            provider.States[field] = CssElementState.UserEdited;
+
+        Assert.True(live.Matches(shortField, ":invalid"));
+        Assert.True(live.Matches(longField, ":invalid"));
+        Assert.True(live.Matches(notes, ":invalid"));
+        Assert.True(live.Matches(number, ":valid"));
+
+        provider.Values[shortField] = string.Empty;
+        Assert.True(live.Matches(shortField, ":valid"));
+    }
+
+    // :user-valid and :user-invalid are :valid and :invalid for a control the user has interacted with,
+    // and for nothing else.
+    [Fact]
+    public void Matches_User_Validity_Only_Once_The_User_Interacted()
+    {
+        var (document, form) = NewForm();
+        var email = Control(document, form, "input", ("type", "email"), ("required", ""));
+        var other = Control(document, form, "input", ("required", ""));
+        var button = Control(document, form, "button");
+        var provider = new ElementStateProvider { Values = { [email] = "x" } };
+        var live = new CssSelectorMatcher(provider);
+
+        Assert.True(live.Matches(email, ":invalid"));
+        Assert.False(live.Matches(email, ":user-invalid"));
+        Assert.False(live.Matches(email, ":user-valid"));
+
+        provider.States[email] = CssElementState.UserInteracted;
+        provider.States[form] = CssElementState.UserInteracted;
+        provider.States[button] = CssElementState.UserInteracted;
+        Assert.True(live.Matches(email, "input:user-invalid"));
+        Assert.False(live.Matches(email, ":user-valid"));
+        Assert.False(live.Matches(other, ":user-invalid"));
+        Assert.False(live.Matches(form, ":user-invalid"));
+        Assert.False(live.Matches(button, ":user-valid"));
+
+        provider.Values[email] = "a@b.c";
+        Assert.True(live.Matches(email, ":user-valid"));
+
+        other.SetAttribute(CssElementStateMarkup.AttributeName, CssElementStateMarkup.Format(CssElementState.UserInteracted)!);
+        Assert.True(new CssSelectorMatcher().Matches(other, ":user-invalid"));
+        Assert.False(live.Matches(other, ":user-invalid"));
+    }
+
+    // :placeholder-shown is an empty field of a type that shows a placeholder, with one to show.
+    [Fact]
+    public void Matches_Placeholder_Shown_For_An_Empty_Field_With_A_Placeholder()
+    {
+        var (document, form) = NewForm();
+        var text = Control(document, form, "input", ("placeholder", "Name"));
+        var number = Control(document, form, "input", ("type", "number"), ("placeholder", "0"));
+        var notes = Control(document, form, "textarea", ("placeholder", "Notes"));
+        var blank = Control(document, form, "input", ("placeholder", ""));
+        var box = Control(document, form, "input", ("type", "checkbox"), ("placeholder", "x"));
+        var filled = Control(document, form, "input", ("placeholder", "Name"), ("value", "Ada"));
+
+        var still = new CssSelectorMatcher();
+        Assert.True(still.Matches(text, ":placeholder-shown"));
+        Assert.True(still.Matches(number, ":placeholder-shown"));
+        Assert.True(still.Matches(notes, "textarea:placeholder-shown"));
+        Assert.False(still.Matches(blank, ":placeholder-shown"));
+        Assert.False(still.Matches(box, ":placeholder-shown"));
+        Assert.False(still.Matches(filled, ":placeholder-shown"));
+
+        var live = new CssSelectorMatcher(new ElementStateProvider { Values = { [text] = "typed", [filled] = "" } });
+        Assert.False(live.Matches(text, ":placeholder-shown"));
+        Assert.True(live.Matches(filled, ":placeholder-shown"));
+    }
+
+    // :visited matches only in a visited link's visited style, where :link stops matching it, and only
+    // for a link a provider reports visited: never from markup, and never for an ordinary query.
+    [Fact]
+    public void Matches_Visited_Only_In_A_Visited_Style_And_Only_From_A_Provider()
+    {
+        var document = new DomDocument();
+        var visited = document.CreateElement("a");
+        visited.SetAttribute("href", "/seen");
+        var fresh = document.CreateElement("a");
+        fresh.SetAttribute("href", "/new");
+        document.AppendChild(visited);
+        visited.AppendChild(fresh);
+
+        var matcher = new CssSelectorMatcher(new ElementStateProvider { States = { [visited] = CssElementState.Visited } });
+        Assert.False(matcher.Matches(visited, ":visited"));
+        Assert.True(matcher.Matches(visited, ":link"));
+
+        using (CssVisitedLinkMatching.Enter())
+        {
+            Assert.True(matcher.Matches(visited, "a:visited"));
+            Assert.False(matcher.Matches(visited, ":link"));
+            Assert.True(matcher.Matches(fresh, ":link"));
+            Assert.False(matcher.Matches(fresh, ":visited"));
+            Assert.True(matcher.Matches(visited, ":any-link"));
+
+            fresh.SetAttribute(CssElementStateMarkup.AttributeName, "visited");
+            Assert.False(new CssSelectorMatcher().Matches(fresh, ":visited"));
+        }
+
+        Assert.False(CssVisitedLinkMatching.Active);
+        Assert.Null(CssElementStateMarkup.Format(CssElementState.Visited));
+        Assert.Equal(CssElementState.Target, CssElementStateMarkup.Parse("visited  target\tbogus"));
+        Assert.Equal("target user-interacted user-edited",
+            CssElementStateMarkup.Format(CssElementState.Target | CssElementState.UserInteracted | CssElementState.UserEdited | CssElementState.Visited));
+    }
+
+    /// <summary>
+    /// :disabled is HTML's "actually disabled", as Chromium matches it (measured): a disabled fieldset
+    /// disables the controls and fieldsets in it except in its first legend, and a disabled optgroup its
+    /// options; :enabled is the rest of the elements that can be disabled, and nothing else. A control in
+    /// the first legend is a validation candidate again.
+    /// </summary>
+    [Fact]
+    public void DisabledIsActuallyDisabled()
+    {
+        var document = new DomDocument();
+        var body = document.CreateElement("body");
+        document.AppendChild(body);
+
+        DomElement Add(DomElement parent, string tag, string id, params string[] attributes)
+        {
+            var element = document.CreateElement(tag);
+            element.SetAttribute("id", id);
+            foreach (var attribute in attributes)
+                element.SetAttribute(attribute, attribute == "disabled" || attribute == "required" ? string.Empty : attribute);
+            parent.AppendChild(element);
+            return element;
+        }
+
+        var select = Add(body, "select", "sel");
+        var group = Add(select, "optgroup", "og", "disabled");
+        Add(group, "option", "o1");
+        Add(select, "option", "o2");
+        var outer = Add(body, "fieldset", "outer", "disabled");
+        var inner = Add(outer, "fieldset", "inner");
+        Add(inner, "input", "deep");
+        var legend = Add(outer, "legend", "first-legend");
+        var inLegend = Add(legend, "fieldset", "inlegend");
+        Add(inLegend, "input", "leg", "required");
+        var second = Add(outer, "legend", "second-legend");
+        Add(second, "input", "second");
+        Add(body, "input", "plain");
+        Add(body, "div", "div");
+
+        var matcher = new CssSelectorMatcher();
+        string Ids(string selector) =>
+            string.Join(",", body.Descendants().OfType<DomElement>().Where(e => matcher.Matches(e, selector)).Select(e => e.GetAttribute("id")));
+
+        Assert.Equal("og,o1,outer,inner,deep,second", Ids(":disabled"));
+        Assert.Equal("sel,o2,inlegend,leg,plain", Ids(":enabled"));
+        Assert.Equal("leg", Ids("input:invalid"));
+    }
+
+    private static (DomDocument Document, DomElement Form) NewForm()
+    {
+        var document = new DomDocument();
+        var form = document.CreateElement("form");
+        document.AppendChild(form);
+        return (document, form);
+    }
+
+    private static DomElement Control(DomDocument document, DomElement form, string tag, params (string Name, string Value)[] attributes)
+    {
+        var control = document.CreateElement(tag);
+        foreach (var (name, value) in attributes)
+            control.SetAttribute(name, value);
+        form.AppendChild(control);
+        return control;
+    }
+
+    private sealed class ElementStateProvider : ICssSelectorStateProvider
+    {
+        public Dictionary<DomElement, CssElementState> States { get; } = new(ReferenceEqualityComparer.Instance);
+
+        public Dictionary<DomElement, string> Values { get; } = new(ReferenceEqualityComparer.Instance);
+
+        public Dictionary<DomElement, bool> Checked { get; } = new(ReferenceEqualityComparer.Instance);
+
+        public bool? IsChecked(DomElement element) => Checked.TryGetValue(element, out var value) ? value : null;
+
+        public CssElementState GetElementState(DomElement element) =>
+            States.TryGetValue(element, out var state) ? state : CssElementState.None;
+
+        public string? GetValue(DomElement element) => Values.TryGetValue(element, out var value) ? value : null;
+    }
+
     private sealed class UserActionStateProvider(Dictionary<DomElement, CssUserActionState> states) : ICssSelectorStateProvider
     {
         public CssUserActionState GetUserActionState(DomElement element) =>

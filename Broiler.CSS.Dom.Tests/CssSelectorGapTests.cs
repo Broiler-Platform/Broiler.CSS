@@ -24,6 +24,7 @@ public sealed class CssSelectorGapTests
     [InlineData("details[open] > summary, input:checked + label, :root")]
     [InlineData("p::before, p:after, li::marker, ::selection, dialog::backdrop")]
     [InlineData("a:any-link:has(> img)")]
+    [InlineData("input:placeholder-shown + label")]
     public void A_Modeled_Selector_Has_No_Gaps(string selector) => Assert.Empty(Gaps(selector));
 
     [Theory]
@@ -35,8 +36,9 @@ public sealed class CssSelectorGapTests
     [InlineData(":matches(h1, h2)", "Invalid :matches(h1, h2)")]
     [InlineData("a:hover", "Interactive :hover")]
     [InlineData("a:visited", "Interactive :visited")]
-    [InlineData("input:placeholder-shown + label", "NotModeled :placeholder-shown")]
-    [InlineData("section:target", "NotModeled :target")]
+    [InlineData("section:target", "Interactive :target")]
+    [InlineData("input:user-invalid", "Interactive :user-invalid")]
+    [InlineData("section:target-within", "NotModeled :target-within")]
     [InlineData("input::placeholder", "UnstyledPseudoElement ::placeholder")]
     [InlineData("::-webkit-scrollbar-thumb", "UnstyledPseudoElement ::-webkit-scrollbar-thumb")]
     [InlineData("p::before:hover", "UnstyledPseudoElement ::before:hover")]
