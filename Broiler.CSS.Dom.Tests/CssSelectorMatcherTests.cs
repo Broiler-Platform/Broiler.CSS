@@ -121,6 +121,60 @@ public sealed class CssSelectorMatcherTests
         Assert.True(matcher.Matches(checkbox, "input:enabled:checked"));
     }
 
+    // The user-action pseudo-classes match what the state provider reports of the element itself, and
+    // nothing at all without one: a still render has nothing hovered, pressed or focused.
+    [Fact]
+    public void Matches_User_Action_Pseudo_Classes_From_The_State_Provider()
+    {
+        var tree = CreateTree();
+        var host = tree.First.ParentElement!;
+        var matcher = new CssSelectorMatcher(new UserActionStateProvider(new Dictionary<DomElement, CssUserActionState>
+        {
+            [host] = CssUserActionState.Hover | CssUserActionState.FocusWithin,
+            [tree.First] = CssUserActionState.Hover | CssUserActionState.Active | CssUserActionState.FocusWithin,
+            [tree.Note] = CssUserActionState.Hover | CssUserActionState.Active | CssUserActionState.Focus |
+                          CssUserActionState.FocusVisible | CssUserActionState.FocusWithin,
+        }));
+
+        Assert.True(matcher.Matches(tree.Note, "#host:hover .note:focus"));
+        Assert.True(matcher.Matches(tree.Note, "span:focus-visible"));
+        Assert.True(matcher.Matches(tree.First, "p:active:focus-within"));
+        Assert.False(matcher.Matches(tree.First, ":focus"));
+        Assert.False(matcher.Matches(tree.First, ":focus-visible"));
+        Assert.False(matcher.Matches(tree.Second, ":hover"));
+        Assert.True(matcher.Matches(tree.Second, "p:not(:hover)"));
+        Assert.True(matcher.TryMatch(tree.Note, ":hover", out var hovered) && hovered);
+        Assert.True(matcher.TryMatch(tree.Second, ":active", out var active) && !active);
+
+        var still = new CssSelectorMatcher();
+        Assert.False(still.Matches(tree.Note, ":hover"));
+        Assert.False(still.Matches(tree.Note, ":focus-within"));
+        Assert.False(new CssSelectorMatcher(new CheckedStateProvider(tree.Note)).Matches(tree.Note, ":focus"));
+    }
+
+    // A matcher with no provider -- the renderer's, handed a page as markup -- reads the state the
+    // markup carries; one with a provider asks the provider alone, so a page cannot claim a state.
+    [Fact]
+    public void Matches_User_Action_State_Carried_In_Markup_Only_Without_A_Provider()
+    {
+        var tree = CreateTree();
+        tree.First.SetAttribute(CssUserActionStateMarkup.AttributeName, "hover  focus-within\tbogus");
+        tree.Note.SetAttribute(CssUserActionStateMarkup.AttributeName, CssUserActionStateMarkup.Format(
+            CssUserActionState.Hover | CssUserActionState.Focus | CssUserActionState.FocusVisible | CssUserActionState.FocusWithin)!);
+
+        var renderer = new CssSelectorMatcher();
+        Assert.True(renderer.Matches(tree.First, "p:hover:focus-within"));
+        Assert.False(renderer.Matches(tree.First, ":focus"));
+        Assert.True(renderer.Matches(tree.Note, ".note:focus:focus-visible"));
+        Assert.False(renderer.Matches(tree.Second, ":hover"));
+        Assert.Equal("hover focus focus-visible focus-within", tree.Note.GetAttribute(CssUserActionStateMarkup.AttributeName));
+        Assert.Null(CssUserActionStateMarkup.Format(CssUserActionState.None));
+
+        var live = new CssSelectorMatcher(new UserActionStateProvider([]));
+        Assert.False(live.Matches(tree.First, ":hover"));
+        Assert.False(live.Matches(tree.Note, ":focus"));
+    }
+
     [Fact]
     public void Has_Matches_Nth_Child_And_Nested_Functions()
     {
@@ -236,5 +290,11 @@ public sealed class CssSelectorMatcherTests
     {
         public bool? IsChecked(DomElement element) =>
             ReferenceEquals(element, checkedElement);
+    }
+
+    private sealed class UserActionStateProvider(Dictionary<DomElement, CssUserActionState> states) : ICssSelectorStateProvider
+    {
+        public CssUserActionState GetUserActionState(DomElement element) =>
+            states.TryGetValue(element, out var state) ? state : CssUserActionState.None;
     }
 }

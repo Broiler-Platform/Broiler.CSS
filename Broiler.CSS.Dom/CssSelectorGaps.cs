@@ -23,7 +23,10 @@ public enum CssSelectorGapKind
     /// <summary>
     /// A pseudo-class that needs a user or a history (<c>:hover</c>, <c>:focus</c>, <c>:visited</c>,
     /// …): nothing is hovered, focused or visited in a still render, so it matches nothing — as in a
-    /// browser nobody has touched.
+    /// browser nobody has touched. Where a page is being used, the matcher's state provider reports
+    /// what is hovered, pressed and focused (<see cref="ICssSelectorStateProvider.GetUserActionState"/>),
+    /// or without one the document's markup does (<see cref="CssUserActionStateMarkup"/>), and
+    /// <c>:hover</c>, <c>:active</c> and the focus pseudo-classes match that.
     /// </summary>
     Interactive,
 
