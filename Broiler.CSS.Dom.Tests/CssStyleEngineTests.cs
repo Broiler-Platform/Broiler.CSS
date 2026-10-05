@@ -339,6 +339,57 @@ public sealed class CssStyleEngineTests
         Assert.NotEqual("red", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
     }
 
+    // A rule of a user-action pseudo-class applies to the element the state provider reports in that
+    // state, and the cascade follows the state once the caches are invalidated.
+    [Fact]
+    public void User_Action_Rules_Apply_Where_The_State_Provider_Reports_The_State()
+    {
+        var (_, _, body) = NewDocument();
+        var link = body.OwnerDocument!.CreateElement("a");
+        var other = body.OwnerDocument.CreateElement("a");
+        body.AppendChild(link);
+        body.AppendChild(other);
+
+        var state = new MutableUserActionState();
+        var engine = EngineWith(
+            "a { color: blue; } a:hover { color: red; } a:focus-visible { outline-style: solid; } body:focus-within { background-color: lime; }",
+            state);
+
+        Assert.Equal("blue", engine.GetComputedStyle(link).GetPropertyValue("color"));
+
+        state.Hovered = link;
+        state.Focused = link;
+        engine.InvalidateComputedStyleCaches();
+
+        Assert.Equal("red", engine.GetComputedStyle(link).GetPropertyValue("color"));
+        Assert.Equal("solid", engine.GetComputedStyle(link).GetPropertyValue("outline-style"));
+        Assert.Equal("lime", engine.GetComputedStyle(body).GetPropertyValue("background-color"));
+        Assert.Equal("blue", engine.GetComputedStyle(other).GetPropertyValue("color"));
+    }
+
+    private sealed class MutableUserActionState : ICssSelectorStateProvider
+    {
+        public DomElement? Hovered { get; set; }
+
+        public DomElement? Focused { get; set; }
+
+        public CssUserActionState GetUserActionState(DomElement element)
+        {
+            var state = CssUserActionState.None;
+            if (ReferenceEquals(element, Hovered))
+                state |= CssUserActionState.Hover;
+            if (ReferenceEquals(element, Focused))
+                state |= CssUserActionState.Focus | CssUserActionState.FocusVisible;
+            for (var current = Focused; current is not null; current = current.ParentElement)
+            {
+                if (ReferenceEquals(current, element))
+                    state |= CssUserActionState.FocusWithin;
+            }
+
+            return state;
+        }
+    }
+
     private static CssStyleEngine EngineWith(string css, ICssSelectorStateProvider? state = null)
     {
         var engine = new CssStyleEngine(state);

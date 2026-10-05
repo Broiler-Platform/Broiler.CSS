@@ -279,13 +279,20 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 // is any element that IS a hyperlink. It used to fall through to the lenient
                 // default below and match every element, not just links.
                 "any-link" => IsNamed(element, "a", "area") && element.HasAttribute("href"),
-                // Interactive/user-state pseudo-classes never match in a static
-                // render (nothing is focused, hovered, active, or targeted), so a UA
-                // rule like `:focus { outline: thin dotted invert }` must not apply
-                // to every element.
-                "focus" or "focus-visible" or "focus-within"
-                    or "hover" or "active"
-                    or "target" or "target-within"
+                // The user-action pseudo-classes (Selectors 4 §9) match what the state
+                // provider says the user is doing to the element: a page someone is using
+                // has an element under the pointer, one pressed, one focused. Without a
+                // provider it is what the document's markup carries (CssUserActionStateMarkup),
+                // which in a still render is nothing, so a UA rule like
+                // `:focus { outline: thin dotted invert }` applies to no element.
+                "hover" => HasUserAction(element, CssUserActionState.Hover),
+                "active" => HasUserAction(element, CssUserActionState.Active),
+                "focus" => HasUserAction(element, CssUserActionState.Focus),
+                "focus-visible" => HasUserAction(element, CssUserActionState.FocusVisible),
+                "focus-within" => HasUserAction(element, CssUserActionState.FocusWithin),
+                // The other state of a user or a URL nothing reports: nothing is targeted
+                // or autofilled, and no field has been left by a user who edited it.
+                "target" or "target-within"
                     or "autofill" or "placeholder-shown"
                     or "user-valid" or "user-invalid" => false,
                 // A recognized-but-unmodeled pseudo-class (e.g. :read-only,
@@ -306,6 +313,13 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         compound = RemovePseudos(compound, pseudos);
         return true;
     }
+
+    /// <summary>
+    /// Whether <paramref name="element"/> is in <paramref name="state"/>: as the state provider reports
+    /// it, or without one as the element's markup says (<see cref="CssUserActionStateMarkup"/>).
+    /// </summary>
+    private bool HasUserAction(DomElement element, CssUserActionState state) =>
+        ((stateProvider?.GetUserActionState(element) ?? CssUserActionStateMarkup.Read(element)) & state) != 0;
 
     /// <summary>
     /// The lenient arm of the pseudo-class switch: a name the specs define but this matcher does
