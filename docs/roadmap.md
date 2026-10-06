@@ -44,6 +44,23 @@ Exit gate:
 - `basefont` and `rp` are `none` in `DisplayValues` and in Broiler.HTML's default
   stylesheet, and the tests that pin their absence are replaced.
 
+### CSS Color 4 functions in the base colour parser
+
+`CssValueParser.TryParseColor` reads hex, named and system colours, `rgb()`/`hsl()` and
+`contrast-color()`. `CssColor4` converts the CSS Color 4/5 functions (`hwb()`, `lab()`, `lch()`,
+`oklab()`, `oklch()`, `color()`, `color-mix()`, relative colours and the `/ <alpha>`
+spelling) to `rgba()`, so a caller has to normalise a value before parsing it. Fold the
+conversion into the parser. `CssColor4` resolves its operands through `TryParseColor`, so a
+direct call from the parser recurses: keep the nesting limit, the caller-supplied
+`currentcolor` and the rounding when it moves.
+
+Exit gate:
+
+- `TryParseColor` returns the same colour as `TryParseColor(CssColor4.NormalizeColorFunctions(value))`
+  for every case in `CssColor4Tests`.
+- `currentcolor` inside a `color-mix()` or a relative colour still needs the caller's colour,
+  and a colour nested past the limit is still declined rather than overflowing the stack.
+
 ### Preview review
 
 The human-review record applies to a specific revision. Before a new preview claim,
