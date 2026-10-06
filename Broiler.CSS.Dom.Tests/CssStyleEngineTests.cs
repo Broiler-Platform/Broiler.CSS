@@ -367,6 +367,91 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", engine.GetComputedStyle(other).GetPropertyValue("color"));
     }
 
+    // A visited link takes only its colours from its visited style -- in which :visited matches it and
+    // :link does not -- each with the alpha of its unvisited colour; everything else, and every query
+    // but the renderer's cascade, is as if it were not visited.
+    [Fact]
+    public void A_Visited_Link_Takes_Only_Colours_From_Its_Visited_Style()
+    {
+        var (_, _, body) = NewDocument();
+        var seen = Link(body, "/seen");
+        var fresh = Link(body, "/new");
+
+        var state = new VisitedLinks(seen);
+        var engine = EngineWith(
+            "a:link { color: red; font-weight: bold; } " +
+            "a:visited { color: green; font-size: 40px; background-color: yellow; text-decoration-color: blue; } " +
+            "a { background-color: rgba(255, 0, 0, 0.5); }",
+            state);
+
+        var visited = engine.GetCascadedStyle(seen);
+        Assert.Equal("green", visited["color"]);
+        Assert.Equal("700", visited["font-weight"]);
+        Assert.False(visited.ContainsKey("font-size"));
+        Assert.Equal("rgba(255, 255, 0, 0.502)", visited["background-color"]);
+        Assert.Equal("blue", visited["text-decoration-color"]);
+
+        var unvisited = engine.GetCascadedStyle(fresh);
+        Assert.Equal("red", unvisited["color"]);
+        Assert.Equal("rgba(255, 0, 0, 0.5)", unvisited["background-color"]);
+
+        Assert.Equal("red", engine.GetComputedStyle(seen).GetPropertyValue("color"));
+    }
+
+    // What is inside a visited link is styled with it -- a.visited's descendants match `a:visited span`
+    // -- and a colour the visited style leaves undeclared is inherited, not the :link one.
+    [Fact]
+    public void A_Visited_Links_Descendants_Share_Its_Visited_Style()
+    {
+        var (document, _, body) = NewDocument();
+        var seen = Link(body, "/seen");
+        var inside = document.CreateElement("span");
+        seen.AppendChild(inside);
+        var fresh = Link(body, "/new");
+        var freshInside = document.CreateElement("span");
+        fresh.AppendChild(freshInside);
+
+        var engine = EngineWith("span { color: red; } a:visited span { color: green; } a:link { color: blue; }", new VisitedLinks(seen));
+
+        Assert.Equal("green", engine.GetCascadedStyle(inside)["color"]);
+        Assert.Equal("red", engine.GetCascadedStyle(freshInside)["color"]);
+        Assert.False(engine.GetCascadedStyle(seen).ContainsKey("color"));
+        Assert.Equal("blue", engine.GetCascadedStyle(fresh)["color"]);
+    }
+
+    // A visited background the visited style leaves transparent is the unvisited one, and one it sets
+    // over a transparent unvisited background stays transparent.
+    [Fact]
+    public void A_Visited_Background_Never_Shows_What_The_Unvisited_One_Hides()
+    {
+        var (_, _, body) = NewDocument();
+        var kept = Link(body, "/kept");
+        var hidden = Link(body, "/hidden");
+        kept.ClassName = "kept";
+        hidden.ClassName = "hidden";
+
+        var engine = EngineWith(
+            "a.kept:link { background-color: yellow; } a.hidden:visited { background-color: yellow; }",
+            new VisitedLinks(kept, hidden));
+
+        Assert.Equal("yellow", engine.GetCascadedStyle(kept)["background-color"]);
+        Assert.Equal("rgba(255, 255, 0, 0)", engine.GetCascadedStyle(hidden)["background-color"]);
+    }
+
+    private static DomElement Link(DomElement parent, string href)
+    {
+        var link = parent.OwnerDocument!.CreateElement("a");
+        link.SetAttribute("href", href);
+        parent.AppendChild(link);
+        return link;
+    }
+
+    private sealed class VisitedLinks(params DomElement[] visited) : ICssSelectorStateProvider
+    {
+        public CssElementState GetElementState(DomElement element) =>
+            Array.IndexOf(visited, element) >= 0 ? CssElementState.Visited : CssElementState.None;
+    }
+
     private sealed class MutableUserActionState : ICssSelectorStateProvider
     {
         public DomElement? Hovered { get; set; }

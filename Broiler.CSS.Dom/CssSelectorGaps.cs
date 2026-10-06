@@ -21,19 +21,22 @@ public enum CssSelectorGapKind
     Invalid,
 
     /// <summary>
-    /// A pseudo-class that needs a user or a history (<c>:hover</c>, <c>:focus</c>, <c>:visited</c>,
-    /// …): nothing is hovered, focused or visited in a still render, so it matches nothing — as in a
-    /// browser nobody has touched. Where a page is being used, the matcher's state provider reports
-    /// what is hovered, pressed and focused (<see cref="ICssSelectorStateProvider.GetUserActionState"/>),
-    /// or without one the document's markup does (<see cref="CssUserActionStateMarkup"/>), and
-    /// <c>:hover</c>, <c>:active</c> and the focus pseudo-classes match that.
+    /// A pseudo-class that needs a user, a script, a history or a URL (<c>:hover</c>, <c>:focus</c>,
+    /// <c>:visited</c>, <c>:target</c>, <c>:user-invalid</c>, <c>:popover-open</c>, <c>:modal</c>, …):
+    /// nothing is hovered, focused, visited, targeted, interacted with, shown as a popover or opened as a
+    /// modal dialog in a still render, so it matches nothing — as in a browser nobody has touched, on a URL
+    /// with no fragment. Where a page is being used, the matcher's state provider
+    /// reports what is hovered, pressed and focused (<see cref="ICssSelectorStateProvider.GetUserActionState"/>)
+    /// and which element is the target, which controls the user has interacted with and which links are
+    /// visited (<see cref="ICssSelectorStateProvider.GetElementState"/>), or without one the document's
+    /// markup does (<see cref="CssUserActionStateMarkup"/>, <see cref="CssElementStateMarkup"/>), and
+    /// these pseudo-classes match that. <c>:autofill</c> stays here: nothing fills a form in.
     /// </summary>
     Interactive,
 
     /// <summary>
-    /// A pseudo-class the matcher answers "no" for, where a browser can match it on a page nobody has
-    /// touched: <c>:placeholder-shown</c> (an empty field with a placeholder) and <c>:target</c> and
-    /// <c>:target-within</c> (the URL's fragment).
+    /// A pseudo-class the matcher answers "no" for, where a browser could match it: <c>:target-within</c>,
+    /// which no browser implements.
     /// </summary>
     NotModeled,
 
@@ -161,13 +164,13 @@ public sealed partial class CssSelectorMatcher
             or "nth-child" or "nth-last-child" or "nth-of-type" or "nth-last-of-type"
             or "empty" or "root" or "scope" or "not" or "is" or "where" or "-webkit-any" or "has"
             or "lang" or "dir" or "open" or "enabled" or "disabled" or "checked" or "valid" or "invalid"
-            or "required" or "optional" or "link" or "any-link" => null,
+            or "required" or "optional" or "link" or "any-link" or "placeholder-shown" => null,
         // The legacy single-colon pseudo-elements: the cascade styles them as pseudo-elements.
         "before" or "after" or "first-line" or "first-letter" => null,
         "matches" or "any" or "-moz-any" => CssSelectorGapKind.Invalid,
-        "hover" or "active" or "focus" or "focus-visible" or "focus-within" or "visited"
-            or "autofill" or "user-valid" or "user-invalid" => CssSelectorGapKind.Interactive,
-        "target" or "target-within" or "placeholder-shown" => CssSelectorGapKind.NotModeled,
+        "hover" or "active" or "focus" or "focus-visible" or "focus-within" or "visited" or "target"
+            or "autofill" or "user-valid" or "user-invalid" or "popover-open" or "modal" => CssSelectorGapKind.Interactive,
+        "target-within" => CssSelectorGapKind.NotModeled,
         _ when name.StartsWith('-') || RecognizedPseudoClasses.Contains(name) => CssSelectorGapKind.Guessed,
         _ => CssSelectorGapKind.Invalid,
     };

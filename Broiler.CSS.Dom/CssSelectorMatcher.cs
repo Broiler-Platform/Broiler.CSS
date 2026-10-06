@@ -246,8 +246,12 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 "lang" => argument is not null && MatchesLanguage(element, argument),
                 "dir" => argument is not null && MatchesDirectionality(element, argument),
                 "open" => IsNamed(element, "details", "dialog") && element.HasAttribute("open"),
-                "enabled" => IsFormControl(element) && !element.HasAttribute("disabled"),
-                "disabled" => IsFormControl(element) && element.HasAttribute("disabled"),
+                // HTML §4.16.3: an element that can be disabled and is "actually disabled" -- by its
+                // own attribute, by a disabled fieldset it is in (outside that fieldset's first
+                // legend), or, for an option, by a disabled optgroup parent. Only the element's own
+                // attribute counted, so a control in a disabled fieldset styled as enabled.
+                "enabled" => CanBeDisabled(element) && !IsActuallyDisabled(element),
+                "disabled" => CanBeDisabled(element) && IsActuallyDisabled(element),
                 "checked" => IsCheckable(element) &&
                     (stateProvider?.IsChecked(element) ?? element.HasAttribute("checked")),
                 // HTML §4.10.16.3: the constraint-validation pseudo-classes match only elements
@@ -263,18 +267,21 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 // svg/linking/reftests/href-a-element-attr-change removes `href` at load and
                 // asserts the element keeps its link status, so `a:link rect { fill: lime }` must
                 // still match. Testing `href` alone repainted that rect red.
-                "link" => IsNamed(element, "a", "area") &&
-                    (element.HasAttribute("href") || element.HasAttribute("xlink:href")),
+                //
+                // In a visited link's visited style -- the second cascade the engine computes for a
+                // visited link and what is inside it -- :link no longer matches that link.
+                "link" => IsLink(element) && !(CssVisitedLinkMatching.Active && IsVisitedLink(element)),
                 // Selectors 4 §7.1 pairs :link and :visited, but they are not synonyms —
-                // :visited matches a link this user has been to. A static render has no
-                // history to consult, and :visited is the one selector a page must never be
-                // able to read history through, so the honest and the safe answer are the
-                // same one: it never matches. Treating it as :link applied every visited
-                // style to every link, which is not a subtle shading difference — the rule
-                // comes later in the sheet and wins the cascade, so on www.mediawiki.org
-                // every link in the article rendered in the visited purple (#6a60b0) where a
-                // browser shows the unvisited blue (#36c).
-                "visited" => false,
+                // :visited matches a link this user has been to, and it is the one selector a page
+                // must never be able to read the user's history through. So it matches only in a
+                // visited link's visited style, only where a renderer's provider says the link is
+                // visited, and only colours come of it (CssStyleEngine.GetCascadedStyle); every
+                // other answer -- querySelector, matches, getComputedStyle -- is as if the link were
+                // not visited. Treating it as :link applied every visited style to every link,
+                // which is not a subtle shading difference — the rule comes later in the sheet and
+                // wins the cascade, so on www.mediawiki.org every link in the article rendered in
+                // the visited purple (#6a60b0) where a browser shows the unvisited blue (#36c).
+                "visited" => CssVisitedLinkMatching.Active && IsLink(element) && IsVisitedLink(element),
                 // :any-link is the union of the two, and unlike :visited it is knowable: it
                 // is any element that IS a hyperlink. It used to fall through to the lenient
                 // default below and match every element, not just links.
@@ -290,11 +297,29 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 "focus" => HasUserAction(element, CssUserActionState.Focus),
                 "focus-visible" => HasUserAction(element, CssUserActionState.FocusVisible),
                 "focus-within" => HasUserAction(element, CssUserActionState.FocusWithin),
-                // The other state of a user or a URL nothing reports: nothing is targeted
-                // or autofilled, and no field has been left by a user who edited it.
-                "target" or "target-within"
-                    or "autofill" or "placeholder-shown"
-                    or "user-valid" or "user-invalid" => false,
+                // The element the fragment of the document's URL names, as the provider or the
+                // markup (CssElementStateMarkup) reports it. :target-within, which no browser
+                // implements, matches nothing.
+                "target" => HasElementState(element, CssElementState.Target),
+                "target-within" => false,
+                // A showing popover, and a dialog open as a modal one (or the fullscreen element): states
+                // only a script or the user puts an element in, which the provider or the markup reports.
+                // Both used to fall through to the lenient default and match every element, so a closed
+                // popover was never `[popover]:not(:popover-open)` and every element was `:modal`.
+                "popover-open" => HasElementState(element, CssElementState.PopoverOpen),
+                "modal" => HasElementState(element, CssElementState.Modal),
+                // HTML §4.10.16.3: a control's validity, once the user has interacted with it --
+                // committed a change to it, or tried to submit its form.
+                "user-valid" => IsUserValidityCandidate(element)
+                    && HasElementState(element, CssElementState.UserInteracted)
+                    && !HasConstraintViolation(element),
+                "user-invalid" => IsUserValidityCandidate(element)
+                    && HasElementState(element, CssElementState.UserInteracted)
+                    && HasConstraintViolation(element),
+                // An empty field showing its placeholder.
+                "placeholder-shown" => IsPlaceholderShown(element),
+                // Nothing here fills a form in for the user, so nothing is autofilled.
+                "autofill" => false,
                 // A recognized-but-unmodeled pseudo-class (e.g. :read-only,
                 // :any-link, :defined, most form-state pseudos) stays lenient —
                 // matching as it did before — so this is a strict narrowing.
@@ -968,6 +993,55 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool AsciiEquals(string left, string right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
     private static bool IsNamed(DomElement element, params string[] names) => names.Any(name => AsciiEquals(element.LocalName, name));
     private static bool IsFormControl(DomElement element) => IsNamed(element, "input", "button", "select", "textarea");
+
+    /// <summary>An <c>a</c> or <c>area</c> that is a hyperlink, through <c>href</c> or SVG's <c>xlink:href</c>.</summary>
+    internal static bool IsLink(DomElement element) =>
+        IsNamed(element, "a", "area") && (element.HasAttribute("href") || element.HasAttribute("xlink:href"));
+
+    /// <summary>
+    /// Whether <paramref name="element"/> is in <paramref name="state"/>: as the state provider reports it,
+    /// or without one as the element's markup says (<see cref="CssElementStateMarkup"/>).
+    /// </summary>
+    private bool HasElementState(DomElement element, CssElementState state) =>
+        ((stateProvider?.GetElementState(element) ?? CssElementStateMarkup.Read(element)) & state) != 0;
+
+    /// <summary>Whether a renderer's provider says <paramref name="element"/> is a visited link; markup never can.</summary>
+    private bool IsVisitedLink(DomElement element) =>
+        stateProvider is not null && (stateProvider.GetElementState(element) & CssElementState.Visited) != 0;
+
+    /// <summary>The control's value: the provider's live one, or its markup's.</summary>
+    private string ValueOf(DomElement element) =>
+        stateProvider?.GetValue(element) ?? (IsNamed(element, "textarea")
+            ? element.TextContent
+            : element.GetAttribute("value") ?? string.Empty);
+
+    /// <summary>
+    /// The controls <c>:user-valid</c> and <c>:user-invalid</c> can match: an input, a text area or a
+    /// select that takes part in constraint validation.
+    /// </summary>
+    private static bool IsUserValidityCandidate(DomElement element) =>
+        IsNamed(element, "input", "textarea", "select") && IsConstraintValidationCandidate(element);
+
+    /// <summary>
+    /// <c>:placeholder-shown</c>: a text area, or an input of a type that shows a placeholder, with a
+    /// placeholder to show and nothing in it.
+    /// </summary>
+    private bool IsPlaceholderShown(DomElement element)
+    {
+        if (!IsNamed(element, "textarea") && !(IsNamed(element, "input") && ShowsPlaceholder(element)))
+            return false;
+
+        return element.GetAttribute("placeholder") is { Length: > 0 } && ValueOf(element).Length == 0;
+    }
+
+    /// <summary>The <c>input</c> types with a placeholder: the text-like ones and <c>number</c>.</summary>
+    private static bool ShowsPlaceholder(DomElement input) =>
+        input.GetAttribute("type") is not { } type || IsTextLikeType(type) || AsciiEquals(type, "number");
+
+    /// <summary>The <c>input</c> types a user types free text into, which <c>minlength</c> and <c>maxlength</c> apply to.</summary>
+    private static bool IsTextLikeType(string type) =>
+        AsciiEquals(type, "text") || AsciiEquals(type, "search") || AsciiEquals(type, "url")
+            || AsciiEquals(type, "tel") || AsciiEquals(type, "email") || AsciiEquals(type, "password");
     private static bool IsCheckable(DomElement element) => IsNamed(element, "input") && element.GetAttribute("type") is { } type && (AsciiEquals(type, "checkbox") || AsciiEquals(type, "radio"));
 
     // ───────────────── HTML §4.10.16: constraint validation ─────────────────
@@ -1002,18 +1076,52 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     /// <summary>Whether the element is disabled for validation: its own <c>disabled</c> attribute,
     /// or an ancestor <c>&lt;fieldset disabled&gt;</c>, which disables the controls it contains.
     /// </summary>
-    private static bool IsDisabledForValidation(DomElement element)
+    private static bool IsDisabledForValidation(DomElement element) => IsActuallyDisabled(element);
+
+    /// <summary>The elements HTML lets be disabled: the listed controls a fieldset disables, the fieldset, and an optgroup or option.</summary>
+    private static bool CanBeDisabled(DomElement element) =>
+        IsNamed(element, "button", "input", "select", "textarea", "fieldset", "optgroup", "option");
+
+    /// <summary>
+    /// HTML §4.10.18.5, §4.10.15, §4.10.9 and §4.10.10: whether <paramref name="element"/> is disabled --
+    /// its own <c>disabled</c>; for an option, a disabled optgroup parent; for anything else, a disabled
+    /// fieldset it is in, unless it is in that fieldset's first legend.
+    /// </summary>
+    /// <remarks>
+    /// A control in the first legend of a disabled fieldset is enabled, and so took part in constraint
+    /// validation, which the fieldset test this replaces missed: it barred the legend's controls too.
+    /// </remarks>
+    private static bool IsActuallyDisabled(DomElement element)
     {
         if (element.HasAttribute("disabled"))
             return true;
 
-        for (var node = element.ParentNode; node is DomElement ancestor; node = ancestor.ParentNode)
+        if (IsNamed(element, "optgroup"))
+            return false;
+
+        if (IsNamed(element, "option"))
+            return element.ParentNode is DomElement parent && IsNamed(parent, "optgroup") && parent.HasAttribute("disabled");
+
+        var child = element;
+        for (var node = element.ParentNode; node is DomElement ancestor; child = ancestor, node = ancestor.ParentNode)
         {
-            if (IsNamed(ancestor, "fieldset") && ancestor.HasAttribute("disabled"))
+            if (IsNamed(ancestor, "fieldset") && ancestor.HasAttribute("disabled") && !ReferenceEquals(child, FirstLegendChild(ancestor)))
                 return true;
         }
 
         return false;
+    }
+
+    /// <summary>The first <c>legend</c> child of <paramref name="fieldset"/>, whose contents its <c>disabled</c> leaves alone.</summary>
+    private static DomElement? FirstLegendChild(DomElement fieldset)
+    {
+        foreach (var child in fieldset.ChildNodes)
+        {
+            if (child is DomElement element && IsNamed(element, "legend"))
+                return element;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -1052,14 +1160,15 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     /// asked only of an element <see cref="IsConstraintValidationCandidate"/> already admitted.
     /// <para>
     /// A <c>&lt;form&gt;</c>/<c>&lt;fieldset&gt;</c> is invalid when any control it contains is;
-    /// an empty one is valid. <c>minlength</c>/<c>maxlength</c> are deliberately never consulted:
-    /// HTML makes "suffering from being too short/long" conditional on the value having been
-    /// <em>edited by the user</em>, and nothing in a static render ever has been — which is
-    /// exactly what <c>form-validation-validity-textarea-defaultValue</c> pins, expecting
+    /// an empty one is valid. The value judged is the live one (<see cref="ValueOf"/>).
+    /// <c>minlength</c>/<c>maxlength</c> are consulted only for a value the user edited
+    /// (<see cref="CssElementState.UserEdited"/>): HTML makes "suffering from being too short/long"
+    /// conditional on it, and nothing in a static render ever has been — which is exactly what
+    /// <c>form-validation-validity-textarea-defaultValue</c> pins, expecting
     /// <c>&lt;textarea minlength=5 required&gt;a&lt;/textarea&gt;</c> to be valid.
     /// </para>
     /// </summary>
-    private static bool HasConstraintViolation(DomElement element)
+    private bool HasConstraintViolation(DomElement element)
     {
         if (IsNamed(element, "form", "fieldset"))
         {
@@ -1075,14 +1184,19 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         if (IsRequiredControl(element) && IsValueMissing(element))
             return true;
 
-        if (!IsNamed(element, "input"))
+        if (!IsNamed(element, "input", "textarea"))
             return false;
 
-        var value = element.GetAttribute("value") ?? string.Empty;
+        var value = ValueOf(element);
         if (value.Length == 0)
             return false;   // an empty value is only ever a `required` violation, handled above
 
         var type = element.GetAttribute("type") ?? "text";
+        if ((IsNamed(element, "textarea") || IsTextLikeType(type)) && IsWrongLengthUserEdit(element, value))
+            return true;
+
+        if (!IsNamed(element, "input"))
+            return false;
         if (AsciiEquals(type, "email") && !IsWellFormedEmailAddress(value))
             return true;
         if (AsciiEquals(type, "url") && !Uri.IsWellFormedUriString(value.Trim(), UriKind.Absolute))
@@ -1101,13 +1215,16 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     /// required radio <c>:valid</c>, because the state belongs to the radio group rather than to
     /// the one element.</para>
     /// </summary>
-    private static bool IsValueMissing(DomElement element)
+    private bool IsValueMissing(DomElement element)
     {
         if (IsNamed(element, "textarea"))
-            return element.TextContent.Length == 0;
+            return ValueOf(element).Length == 0;
 
         if (IsNamed(element, "select"))
         {
+            if (stateProvider?.GetValue(element) is { } selected)
+                return selected.Length == 0;
+
             return !element.Descendants().OfType<DomElement>().Any(option =>
                 IsNamed(option, "option")
                 && option.HasAttribute("selected")
@@ -1122,10 +1239,29 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             if (AsciiEquals(type, "radio"))
                 return false;
             if (AsciiEquals(type, "checkbox"))
-                return !element.HasAttribute("checked");
+                return !(stateProvider?.IsChecked(element) ?? element.HasAttribute("checked"));
         }
 
-        return (element.GetAttribute("value") ?? string.Empty).Length == 0;
+        return ValueOf(element).Length == 0;
+    }
+
+    /// <summary>
+    /// "Suffering from being too short" or "too long": a value the user edited that is shorter than its
+    /// control's <c>minlength</c> or longer than its <c>maxlength</c>, counted in UTF-16 code units.
+    /// </summary>
+    private bool IsWrongLengthUserEdit(DomElement element, string value)
+    {
+        if (!HasElementState(element, CssElementState.UserEdited))
+            return false;
+
+        if (element.GetAttribute("minlength") is { } minimumText
+            && int.TryParse(minimumText, NumberStyles.None, CultureInfo.InvariantCulture, out var minimum)
+            && value.Length < minimum)
+            return true;
+
+        return element.GetAttribute("maxlength") is { } maximumText
+            && int.TryParse(maximumText, NumberStyles.None, CultureInfo.InvariantCulture, out var maximum)
+            && value.Length > maximum;
     }
 
     /// <summary>HTML's <c>pattern</c> attribute is anchored at both ends and matched against the
