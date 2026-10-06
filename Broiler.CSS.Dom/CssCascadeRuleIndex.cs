@@ -289,6 +289,13 @@ internal sealed class CssCascadeRuleIndex
                 return;
         }
 
+        // Room for every candidate up front: growing the list as the merge went was a tenth of a
+        // restyle on a page whose universal bucket holds a few hundred rules.
+        var total = 0;
+        foreach (var list in lists)
+            total += list.Count;
+        candidates.EnsureCapacity(total);
+
         Merge(lists, candidates);
     }
 

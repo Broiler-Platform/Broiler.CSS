@@ -832,6 +832,74 @@ public sealed class CssStyleEngineTests
         Assert.Equal("10px", width);
     }
 
+    // Each element's styles used to rebuild the custom properties of all its ancestors, twice, so a
+    // document's styles cost the sum of its elements' depths: 40% of every pointer move on
+    // html5test.com, a page that declares no custom property at all.
+    [Theory]
+    [InlineData("")]
+    [InlineData("html { --accent: teal; } div { color: var(--accent); }")]
+    public void Custom_Properties_Are_Resolved_Once_Per_Element(string css)
+    {
+        var (_, html, body) = NewDocument();
+        var elements = new List<DomElement> { html, body };
+        var parent = body;
+        for (var depth = 0; depth < 40; depth++)
+        {
+            var div = body.OwnerDocument.CreateElement("div");
+            parent.AppendChild(div);
+            elements.Add(div);
+            parent = div;
+        }
+
+        var engine = EngineWith(css);
+        foreach (var element in elements)
+        {
+            engine.GetComputedStyle(element);
+            engine.GetCascadedStyle(element);
+            engine.GetCascadedStyle(element, includeInlineStyle: true);
+        }
+
+        Assert.Equal(elements.Count, engine.CustomPropertyResolutionCount);
+        if (css.Length > 0)
+            Assert.Equal("teal", engine.GetComputedStyle(parent).GetPropertyValue("color"));
+    }
+
+    // An ancestor's custom properties come from its whole cascade, inline style included, read from
+    // the engine's inline source. They came from its `style` attribute, which a host's inline source
+    // stands in for: HtmlBridge's holds what a script set, which never reaches the attribute.
+    [Fact]
+    public void An_Ancestors_Inline_Custom_Property_Comes_From_The_Inline_Source()
+    {
+        var (_, html, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith("div { color: var(--accent, red); }");
+        engine.SetInlineStyleSource(element => ReferenceEquals(element, html) ? "--accent: green" : null);
+
+        Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
+        Assert.Equal("green", engine.GetCascadedStyle(div)["color"]);
+    }
+
+    // The renderer's cascade leaves inline style out of the ordinary properties, but an element's own
+    // custom properties always included its inline ones -- after which its sheet's were laid over them
+    // again, so a sheet's `--accent` beat an inline one.
+    [Fact]
+    public void An_Inline_Custom_Property_Beats_A_Sheets_In_The_Renderers_Cascade()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        div.SetAttribute("style", "--accent: green");
+        body.AppendChild(div);
+
+        var engine = EngineWith("div { --accent: red; color: var(--accent); }");
+        var cascaded = engine.GetCascadedStyle(div);
+
+        Assert.Equal("green", cascaded["--accent"]);
+        Assert.Equal("green", cascaded["color"]);
+        Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
     [Fact]
     public void Media_Query_Applies_Only_When_Environment_Matches()
     {

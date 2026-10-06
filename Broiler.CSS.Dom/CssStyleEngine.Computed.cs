@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Broiler.Dom;
 
 namespace Broiler.CSS.Dom;
@@ -87,40 +88,130 @@ public sealed partial class CssStyleEngine
 
     // ---- Custom-property resolution ---------------------------------------
 
+    /// <summary>
+    /// Replaces the custom properties in <paramref name="computed"/>, the cascade of
+    /// <paramref name="element"/> (or of its <paramref name="pseudoElement"/>), with the resolved ones:
+    /// inherited, registered defaults applied, and <c>var()</c> and CSS-wide keywords resolved.
+    /// </summary>
     private void MergeResolvedCustomProperties(Dictionary<string, string> computed, DomElement element,
-        Dictionary<string, CustomPropertyRegistration> registrations)
+        string? pseudoElement, Dictionary<string, CustomPropertyRegistration> registrations)
     {
-        var explicitCustomProperties = computed
-            .Where(kv => kv.Key.StartsWith("--", StringComparison.Ordinal))
-            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+        var resolvedForElement = GetResolvedCustomProperties(element, registrations);
 
-        var parentElement = element.ParentElement;
-        var parentResolved = parentElement != null
-            ? BuildResolvedCustomPropertyMap(parentElement, registrations)
+        if (pseudoElement is null)
+        {
+            // The element's own map already holds every custom property its cascade declares, inline
+            // style among them, so nothing in `computed` adds to it. Overlaying them again would also
+            // let a cascade without inline style (the renderer's) put a sheet's value back over the
+            // element's inline one.
+            RemoveCustomProperties(computed);
+            foreach (var kv in resolvedForElement)
+                computed[kv.Key] = kv.Value;
+            return;
+        }
+
+        // A pseudo-element's own custom properties go over its originating element's.
+        Dictionary<string, string>? explicitCustomProperties = null;
+        foreach (var kv in computed)
+        {
+            if (kv.Key.StartsWith("--", StringComparison.Ordinal))
+                (explicitCustomProperties ??= new(StringComparer.OrdinalIgnoreCase))[kv.Key] = kv.Value;
+        }
+
+        var parentResolved = element.ParentElement is { } parentElement
+            ? GetResolvedCustomProperties(parentElement, registrations)
             : null;
-        var resolved = BuildResolvedCustomPropertyMap(element, registrations);
-
-        foreach (var kv in explicitCustomProperties)
-            resolved[kv.Key] = kv.Value;
+        var resolved = new Dictionary<string, string>(resolvedForElement, StringComparer.OrdinalIgnoreCase);
+        if (explicitCustomProperties is not null)
+        {
+            foreach (var kv in explicitCustomProperties)
+                resolved[kv.Key] = kv.Value;
+        }
 
         FinalizeResolvedCustomProperties(resolved, parentResolved, registrations);
 
-        foreach (var key in computed.Keys.Where(k => k.StartsWith("--", StringComparison.Ordinal)).ToList())
-            computed.Remove(key);
-
+        RemoveCustomProperties(computed);
         foreach (var kv in resolved)
             computed[kv.Key] = kv.Value;
     }
 
-    private Dictionary<string, string> BuildResolvedCustomPropertyMap(DomElement element, Dictionary<string, CustomPropertyRegistration> registrations)
+    private static void RemoveCustomProperties(Dictionary<string, string> computed)
     {
-        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, string>? parentResolved = null;
-
-        var parentElement = element.ParentElement;
-        if (parentElement != null)
+        List<string>? customProperties = null;
+        foreach (var key in computed.Keys)
         {
-            parentResolved = BuildResolvedCustomPropertyMap(parentElement, registrations);
+            if (key.StartsWith("--", StringComparison.Ordinal))
+                (customProperties ??= []).Add(key);
+        }
+
+        if (customProperties is null)
+            return;
+
+        foreach (var key in customProperties)
+            computed.Remove(key);
+    }
+
+    /// <summary>
+    /// The resolved custom properties of <paramref name="element"/>: its parent's, less the registered
+    /// ones that do not inherit, with its own cascaded ones (inline style included) over them, finalized.
+    /// The map is shared and must not be changed.
+    /// </summary>
+    /// <remarks>
+    /// An element's map is a function of its parent's and its own cascade, so it is memoized per element
+    /// with the other caches' lifecycle. Each element's styles used to rebuild the maps of all its
+    /// ancestors, twice, from their cascades, which made styling a document cost the sum of its
+    /// elements' depths in cascades even on a page that declares no custom property at all: on
+    /// html5test.com, 40% of each pointer move. The chain is walked up to the nearest ancestor already
+    /// known and resolved downwards from there, so a deep tree costs no stack.
+    /// </remarks>
+    private IReadOnlyDictionary<string, string> GetResolvedCustomProperties(DomElement element,
+        Dictionary<string, CustomPropertyRegistration> registrations)
+    {
+        var mode = RenderMode.Current;
+        if (_customPropertyCache.TryGetValue((element, mode), out var cached))
+            return cached;
+
+        // Captured before any ancestor's map is read, so that a map derived from one an invalidation
+        // made stale is returned but never stored.
+        var generation = CaptureCacheGeneration();
+
+        var chain = new List<DomElement>();
+        var seen = new HashSet<DomElement>(ReferenceEqualityComparer.Instance);
+        IReadOnlyDictionary<string, string>? inherited = null;
+        for (var current = element; current is not null && seen.Add(current); current = current.ParentElement)
+        {
+            if (_customPropertyCache.TryGetValue((current, mode), out var known))
+            {
+                inherited = known;
+                break;
+            }
+
+            chain.Add(current);
+        }
+
+        var resolved = inherited ?? EmptyReadOnlyMap;
+        for (var index = chain.Count - 1; index >= 0; index--)
+        {
+            resolved = ResolveCustomProperties(chain[index], resolved, registrations);
+            StoreIfCurrent(_customPropertyCache, (chain[index], mode), resolved, generation);
+        }
+
+        return resolved;
+    }
+
+    /// <summary>How many elements' custom properties have been resolved: a test's measure of the memo.</summary>
+    internal int CustomPropertyResolutionCount => _customPropertyResolutionCount;
+
+    private int _customPropertyResolutionCount;
+
+    private IReadOnlyDictionary<string, string> ResolveCustomProperties(DomElement element,
+        IReadOnlyDictionary<string, string>? parentResolved, Dictionary<string, CustomPropertyRegistration> registrations)
+    {
+        Interlocked.Increment(ref _customPropertyResolutionCount);
+        Dictionary<string, string>? resolved = null;
+        if (parentResolved is { Count: > 0 })
+        {
+            resolved = new Dictionary<string, string>(parentResolved.Count, StringComparer.OrdinalIgnoreCase);
             foreach (var kv in parentResolved)
             {
                 if (!registrations.TryGetValue(kv.Key, out var registration) || registration.Inherits)
@@ -128,33 +219,23 @@ public sealed partial class CssStyleEngine
             }
         }
 
-        foreach (var (name, value) in CollectLocalDeclarations(element))
+        foreach (var kv in GetCascadedDeclarationMap(element, pseudoElement: null, includeInlineStyle: true))
         {
-            if (name.StartsWith("--", StringComparison.Ordinal))
-                resolved[name] = value;
+            if (kv.Key.StartsWith("--", StringComparison.Ordinal))
+                (resolved ??= new(StringComparer.OrdinalIgnoreCase))[kv.Key] = kv.Value;
         }
 
+        // Nothing inherited, declared or registered: the common case, and nothing to finalize.
+        if (resolved is null && registrations.Count == 0)
+            return EmptyReadOnlyMap;
+
+        resolved ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         FinalizeResolvedCustomProperties(resolved, parentResolved, registrations);
         return resolved;
     }
 
-    private IEnumerable<(string Name, string Value)> CollectLocalDeclarations(DomElement element)
-    {
-        var local = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        CollectCascadedDeclarations(element, pseudoElement: null, local);
-
-        var inline = Attr(element, "style");
-        if (!string.IsNullOrEmpty(inline))
-        {
-            foreach (var (name, value, _) in ParseDeclarations(inline))
-                local[name] = value;
-        }
-
-        return local.Select(kv => (kv.Key, kv.Value));
-    }
-
     private static void FinalizeResolvedCustomProperties(Dictionary<string, string> resolved,
-        Dictionary<string, string>? parentResolved, Dictionary<string, CustomPropertyRegistration> registrations)
+        IReadOnlyDictionary<string, string>? parentResolved, Dictionary<string, CustomPropertyRegistration> registrations)
     {
         for (var pass = 0; pass < MaxCustomPropertyResolutionPasses; pass++)
         {
@@ -183,7 +264,7 @@ public sealed partial class CssStyleEngine
     }
 
     private static bool ApplyRegisteredCustomPropertyDefaults(Dictionary<string, string> resolved,
-        Dictionary<string, string>? parentResolved, Dictionary<string, CustomPropertyRegistration> registrations)
+        IReadOnlyDictionary<string, string>? parentResolved, Dictionary<string, CustomPropertyRegistration> registrations)
     {
         var changed = false;
         foreach (var (propertyName, registration) in registrations)
@@ -209,7 +290,7 @@ public sealed partial class CssStyleEngine
     }
 
     private static bool ResolveCssWideKeywordCustomProperties(Dictionary<string, string> resolved, 
-        Dictionary<string, string>? parentResolved, Dictionary<string, CustomPropertyRegistration> registrations)
+        IReadOnlyDictionary<string, string>? parentResolved, Dictionary<string, CustomPropertyRegistration> registrations)
     {
         var changed = false;
         foreach (var key in resolved.Keys.Where(k => k.StartsWith("--", StringComparison.Ordinal)).ToList())
@@ -533,6 +614,8 @@ public sealed partial class CssStyleEngine
                 _cascadedStyleCache.Clear();
             if (!_sparseCache.IsEmpty)
                 _sparseCache.Clear();
+            if (!_customPropertyCache.IsEmpty)
+                _customPropertyCache.Clear();
         }
     }
 

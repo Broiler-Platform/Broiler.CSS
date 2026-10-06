@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -119,28 +120,95 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         if (source.Length == 0)
             return false;
 
-        var compound = StripPseudoElement(source);
-        // Stripping it is what lets `div::before { … }` reach the div at all, and it is also the
-        // point at which this stops being able to say whether the element itself was selected.
-        if (compound.Length != source.Length)
+        var compound = ParseCompound(source);
+        // Stripping a pseudo-element is what lets `div::before { … }` reach the div at all, and it is
+        // also the point at which this stops being able to say whether the element itself was selected.
+        if (compound.StripsPseudoElement)
             _answeredLeniently = true;
 
-        // Process pseudo-classes BEFORE stripping attributes. A functional pseudo's
-        // argument can itself contain an attribute selector (e.g. the `[open]` in
-        // `:not([open])`); ProcessPseudoClasses consumes such pseudos whole (ExtractPseudos
-        // is bracket-aware and the recursive matcher evaluates the nested `[open]`) and
-        // removes them from the compound. Stripping attributes first would instead hoist the
-        // nested `[open]` into a top-level *positive* filter and leave an empty `:not()`,
-        // inverting `:not([attr])` so it matched elements that HAVE the attribute — which,
-        // for the UA `dialog:not([open]){display:none}` rule, hid OPEN dialogs.
-        if (!ProcessPseudoClasses(element, ref compound, scope))
+        if (!MatchesPseudoClasses(element, compound.PseudoClasses, scope))
             return false;
 
+        // Read only once the pseudo-classes matched, where the scan that found it used to run.
+        if (compound.ScannedLeniently)
+            _answeredLeniently = true;
+
+        if (compound.Type is { } type && !AsciiEquals(element.LocalName, type))
+            return false;
+        if (compound.Id is { } id && !string.Equals(element.Id, id, StringComparison.Ordinal))
+            return false;
+        if (compound.Classes.Length > 0 && !HasClasses(element.ClassName, compound.Classes))
+            return false;
+
+        foreach (var filter in compound.Attributes)
+        {
+            if (!MatchesAttribute(element, filter))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>A compound selector read into what an element is tested against.</summary>
+    /// <param name="StripsPseudoElement">Whether a <c>::</c> pseudo-element was cut off the end.</param>
+    /// <param name="PseudoClasses">Its pseudo-classes in order, each name in lower case and its argument trimmed.</param>
+    /// <param name="Type">The type selector, unescaped, or null for none or <c>*</c>.</param>
+    /// <param name="Id">The id selector, unescaped, or null.</param>
+    /// <param name="Classes">The class selectors, unescaped.</param>
+    /// <param name="Attributes">The attribute selectors outside any pseudo-class.</param>
+    /// <param name="ScannedLeniently">Whether the scan skipped something it does not model.</param>
+    private sealed record ParsedCompound(
+        bool StripsPseudoElement,
+        PseudoClass[] PseudoClasses,
+        string? Type,
+        string? Id,
+        string[] Classes,
+        AttributeFilter[] Attributes,
+        bool ScannedLeniently);
+
+    private readonly record struct PseudoClass(string Name, string? Argument);
+
+    // What a compound says is a function of its text alone. The cascade tests the same compounds
+    // against every element, and reading one again for each -- its pseudo-classes, its attribute
+    // selectors through a regular expression, the element's classes into a set -- was most of what
+    // matching cost. Bounded like the selector splits.
+    private static readonly ConcurrentDictionary<string, ParsedCompound> CompoundCache = new(StringComparer.Ordinal);
+    private const int CompoundCacheLimit = 8192;
+
+    private static ParsedCompound ParseCompound(string source)
+    {
+        if (CompoundCache.TryGetValue(source, out var cached))
+            return cached;
+
+        var parsed = ParseCompoundUncached(source);
+        if (CompoundCache.Count >= CompoundCacheLimit)
+            CompoundCache.Clear();
+        CompoundCache.TryAdd(source, parsed);
+        return parsed;
+    }
+
+    private static ParsedCompound ParseCompoundUncached(string source)
+    {
+        var compound = StripPseudoElement(source);
+        var stripsPseudoElement = compound.Length != source.Length;
+
+        // Pseudo-classes come out BEFORE attributes. A functional pseudo's argument can itself
+        // contain an attribute selector (e.g. the `[open]` in `:not([open])`); ExtractPseudos is
+        // bracket-aware and takes such a pseudo whole, and the recursive matcher evaluates the
+        // nested `[open]`. Stripping attributes first would instead hoist the nested `[open]` into a
+        // top-level *positive* filter and leave an empty `:not()`, inverting `:not([attr])` so it
+        // matched elements that HAVE the attribute — which, for the UA
+        // `dialog:not([open]){display:none}` rule, hid OPEN dialogs.
+        var pseudos = ExtractPseudos(compound);
+        var pseudoClasses = new PseudoClass[pseudos.Count];
+        for (var index = 0; index < pseudos.Count; index++)
+            pseudoClasses[index] = new PseudoClass(pseudos[index].Name.ToLowerInvariant(), pseudos[index].Argument?.Trim());
+        if (pseudos.Count > 0)
+            compound = RemovePseudos(compound, pseudos);
+
         var attributes = new List<AttributeFilter>();
-        // The attribute regex only ever matches when a '[' is present; skip the
-        // Replace (which otherwise scans the whole compound per element) for the
-        // common attribute-free selector. Runs on the now pseudo-free compound, so only
-        // top-level `[...]` remain.
+        // The attribute regex only ever matches when a '[' is present. It runs on the pseudo-free
+        // compound, so only top-level `[...]` remain.
         if (compound.IndexOf('[') >= 0)
         {
             compound = AttributePattern.Replace(compound, match =>
@@ -158,6 +226,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         string? type = null;
         string? id = null;
         var classes = new List<string>();
+        var scannedLeniently = false;
         for (var index = 0; index < compound.Length;)
         {
             switch (compound[index])
@@ -166,7 +235,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                     id = ReadName(compound, ref index);
                     break;
                 case '.':
-                    classes.Add(ReadName(compound, ref index));
+                    classes.Add(Unescape(ReadName(compound, ref index)));
                     break;
                 case '*':
                     index++;
@@ -187,35 +256,65 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                         // own compound, the remains of an attribute selector the pattern did not
                         // recognise. Skipping it is lenient in the same way an unmodelled
                         // pseudo-class is, and is recorded the same way.
-                        _answeredLeniently = true;
+                        scannedLeniently = true;
                         index++;
                     }
                     break;
             }
         }
 
-        if (type is not null && type != "*" &&
-            !AsciiEquals(element.LocalName, Unescape(type)))
-            return false;
-        if (id is not null && !string.Equals(element.Id, Unescape(id), StringComparison.Ordinal))
-            return false;
-
-        var elementClasses = new HashSet<string>(
-            (element.ClassName ?? string.Empty).Split(AsciiWhitespace, StringSplitOptions.RemoveEmptyEntries),
-            StringComparer.Ordinal);
-        if (classes.Any(cssClass => !elementClasses.Contains(Unescape(cssClass))))
-            return false;
-
-        return attributes.All(filter => MatchesAttribute(element, filter));
+        return new ParsedCompound(
+            stripsPseudoElement,
+            pseudoClasses,
+            type is not null && type != "*" ? Unescape(type) : null,
+            id is null ? null : Unescape(id),
+            [.. classes],
+            [.. attributes],
+            scannedLeniently);
     }
 
-    private bool ProcessPseudoClasses(DomElement element, ref string compound, DomElement? scope)
+    /// <summary>Whether every one of <paramref name="classes"/> is a token of <paramref name="classAttribute"/>.</summary>
+    private static bool HasClasses(string? classAttribute, string[] classes)
     {
-        var pseudos = ExtractPseudos(compound);
+        if (string.IsNullOrEmpty(classAttribute))
+            return false;
+
+        foreach (var cssClass in classes)
+        {
+            if (!HasClass(classAttribute, cssClass))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool HasClass(string classAttribute, string cssClass)
+    {
+        var rest = classAttribute.AsSpan();
+        while (true)
+        {
+            var start = rest.IndexOfAnyExcept(AsciiWhitespace);
+            if (start < 0)
+                return false;
+
+            rest = rest[start..];
+            var end = rest.IndexOfAny(AsciiWhitespace);
+            var token = end < 0 ? rest : rest[..end];
+            if (token.SequenceEqual(cssClass))
+                return true;
+            if (end < 0)
+                return false;
+
+            rest = rest[end..];
+        }
+    }
+
+    private bool MatchesPseudoClasses(DomElement element, PseudoClass[] pseudos, DomElement? scope)
+    {
         foreach (var pseudo in pseudos)
         {
-            var argument = pseudo.Argument?.Trim();
-            var name = pseudo.Name.ToLowerInvariant();
+            var argument = pseudo.Argument;
+            var name = pseudo.Name;
             var matches = name switch
             {
                 "first-child" => ElementIndex(element) == 1,
@@ -335,7 +434,6 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 return false;
         }
 
-        compound = RemovePseudos(compound, pseudos);
         return true;
     }
 
@@ -647,7 +745,25 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private static bool IsRoot(DomElement element) =>
         element.ParentNode is DomDocument || element.ParentNode is DomElement parent && parent.LocalName.StartsWith('#');
 
-    private static List<SelectorPart> SplitParts(string selector)
+    // The split of a selector is a function of its text alone, and the cascade asks for the same few
+    // hundred selectors once per element it styles: splitting each one again was a fifth of every
+    // restyle on html5test.com. Bounded so that a page generating selectors cannot grow it for ever.
+    private static readonly ConcurrentDictionary<string, SelectorPart[]> SplitCache = new(StringComparer.Ordinal);
+    private const int SplitCacheLimit = 8192;
+
+    private static IReadOnlyList<SelectorPart> SplitParts(string selector)
+    {
+        if (SplitCache.TryGetValue(selector, out var cached))
+            return cached;
+
+        var parts = SplitPartsUncached(selector).ToArray();
+        if (SplitCache.Count >= SplitCacheLimit)
+            SplitCache.Clear();
+        SplitCache.TryAdd(selector, parts);
+        return parts;
+    }
+
+    private static List<SelectorPart> SplitPartsUncached(string selector)
     {
         selector = NormalizeImpliedDescendantStar(selector);
         var parts = new List<SelectorPart>();
