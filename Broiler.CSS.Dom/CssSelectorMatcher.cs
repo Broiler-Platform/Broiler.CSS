@@ -956,7 +956,13 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             : (index - b) % a == 0 && (index - b) / a >= 0;
     }
 
-    private static List<DomElement> ElementSiblings(DomElement element) => element.ParentNode?.ChildNodes.OfType<DomElement>().ToList() ?? [];
+    // An element's siblings for the child-indexed pseudo-classes. The root element's parent is the
+    // document, which Selectors does not count as a parent here: the root is not :first-child,
+    // :last-child, :only-child or :nth-*() of anything, as in Chromium and Firefox (Acid3 test 35).
+    private static List<DomElement> ElementSiblings(DomElement element) =>
+        element.ParentNode is { } parent and not DomDocument
+            ? [.. parent.ChildNodes.OfType<DomElement>()]
+            : [];
     private static List<DomElement> TypeSiblings(DomElement element) => [.. ElementSiblings(element).Where(candidate => AsciiEquals(candidate.LocalName, element.LocalName))];
     private static int ElementIndex(DomElement element) => ElementSiblings(element).FindIndex(candidate => ReferenceEquals(candidate, element)) + 1;
     
