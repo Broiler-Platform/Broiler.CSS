@@ -27,6 +27,78 @@ public static class CssSyntax
         return text[index + 1] is not ('\n' or '\r' or '\f');
     }
 
+    /// <summary>
+    /// CSS Syntax §4.3.7 "consume an escaped code point": given the <c>\</c> at
+    /// <paramref name="index"/>, answers the index just past the escape — up to six hex digits and
+    /// the one whitespace character that may terminate them, or else the single escaped character.
+    /// </summary>
+    /// <remarks>
+    /// Whether the backslash starts an escape at all is <see cref="IsValidEscape"/>'s question; this
+    /// only measures one. A scanner that splits or trims selector text copies an escape whole with
+    /// it, so that the space of <c>#a\ b</c> or the terminator of <c>#\20 x</c> is never read as a
+    /// combinator or as trailing whitespace.
+    /// </remarks>
+    public static int ConsumeEscape(string text, int index)
+    {
+        index++;
+        var digits = 0;
+        while (index < text.Length && digits < 6 && Uri.IsHexDigit(text[index]))
+        {
+            index++;
+            digits++;
+        }
+        if (digits > 0)
+        {
+            if (index < text.Length && char.IsWhiteSpace(text[index]))
+                index++;
+        }
+        else if (index < text.Length)
+        {
+            index++;
+        }
+        return index;
+    }
+
+    /// <summary>
+    /// Trims whitespace from both ends of <paramref name="text"/>, except trailing whitespace that
+    /// belongs to an escape.
+    /// </summary>
+    /// <remarks>
+    /// Acid3 hides its test 28 "FAIL" with <c>#\  { … }</c>: an id selector for a single space,
+    /// then the space before the block. A plain <see cref="string.Trim()"/> deleted both spaces and
+    /// left <c>#\</c>, an empty id, so the rule matched nothing. Leading whitespace cannot be
+    /// escaped and is trimmed as usual.
+    /// </remarks>
+    public static string TrimPreservingEscapes(string text)
+    {
+        if (text.IndexOf('\\') < 0)
+            return text.Trim();
+
+        var start = 0;
+        while (start < text.Length && char.IsWhiteSpace(text[start]))
+            start++;
+
+        var escapedEnd = start;
+        for (var index = start; index < text.Length;)
+        {
+            if (IsValidEscape(text, index))
+            {
+                index = ConsumeEscape(text, index);
+                escapedEnd = index;
+            }
+            else
+            {
+                index++;
+            }
+        }
+
+        var end = text.Length;
+        while (end > escapedEnd && char.IsWhiteSpace(text[end - 1]))
+            end--;
+
+        return start == 0 && end == text.Length ? text : text[start..end];
+    }
+
     public static IEnumerable<string> SplitTopLevel(string text, char separator)
     {
         var start = 0;

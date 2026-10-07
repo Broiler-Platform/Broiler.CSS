@@ -1126,7 +1126,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         var bestSpecificity = -1;
         foreach (var selector in styleRule.Selectors.Selectors)
         {
-            if (SelectorMatchesComputedStyleTarget(element, selector.Text.Trim(), pseudoElement))
+            if (SelectorMatchesComputedStyleTarget(element, CssSyntax.TrimPreservingEscapes(selector.Text), pseudoElement))
             {
                 // Specificity is computed once at parse time and stored on the
                 // selector (CssSelector.Specificity); reuse it rather than
@@ -1394,7 +1394,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             if (!suffix.Equals(pseudoElement, StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            baseSelector = selector[..doubleColonIndex].TrimEnd();
+            baseSelector = CssSyntax.TrimPreservingEscapes(selector[..doubleColonIndex]);
             // A bare pseudo-element selector (e.g. `::backdrop`) has an empty base
             // and is equivalent to `*::backdrop`: it targets the pseudo-element of
             // any originating element. Match it as the universal selector rather
@@ -1408,7 +1408,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         if (!selector.EndsWith(singleColonSuffix, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        baseSelector = selector[..^singleColonSuffix.Length].TrimEnd();
+        baseSelector = CssSyntax.TrimPreservingEscapes(selector[..^singleColonSuffix.Length]);
         if (baseSelector.Length == 0)
             baseSelector = "*";
         return true;
