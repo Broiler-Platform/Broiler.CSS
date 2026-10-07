@@ -367,6 +367,45 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", engine.GetComputedStyle(other).GetPropertyValue("color"));
     }
 
+    // A host that knows which elements a change reaches invalidates those alone: the hovered row moves,
+    // the two rows and what is in them are resolved again, and every other element keeps its results.
+    [Fact]
+    public void Invalidating_Some_Elements_Resolves_Those_Alone_Again()
+    {
+        var (document, _, body) = NewDocument();
+        var table = document.CreateElement("table");
+        body.AppendChild(table);
+        var rows = new List<(DomElement Row, DomElement Cell)>();
+        for (var index = 0; index < 3; index++)
+        {
+            var row = document.CreateElement("tr");
+            var cell = document.CreateElement("td");
+            row.AppendChild(cell);
+            table.AppendChild(row);
+            rows.Add((row, cell));
+        }
+
+        var state = new MutableUserActionState { Hovered = rows[0].Row };
+        var engine = EngineWith("td { color: blue; } tr:hover > td { color: red; }", state);
+
+        Assert.Equal("red", engine.GetComputedStyle(rows[0].Cell).GetPropertyValue("color"));
+        var untouched = engine.GetComputedStyle(rows[2].Cell);
+        var untouchedCascade = engine.GetCascadedStyle(rows[2].Cell);
+        Assert.Equal("blue", untouched.GetPropertyValue("color"));
+        Assert.Equal("blue", engine.GetComputedStyle(rows[1].Cell).GetPropertyValue("color"));
+
+        state.Hovered = rows[1].Row;
+        engine.InvalidateComputedStyleCaches(new HashSet<DomElement>(ReferenceEqualityComparer.Instance)
+        {
+            rows[0].Row, rows[0].Cell, rows[1].Row, rows[1].Cell,
+        });
+
+        Assert.Equal("blue", engine.GetComputedStyle(rows[0].Cell).GetPropertyValue("color"));
+        Assert.Equal("red", engine.GetComputedStyle(rows[1].Cell).GetPropertyValue("color"));
+        Assert.Same(untouched, engine.GetComputedStyle(rows[2].Cell));
+        Assert.Same(untouchedCascade, engine.GetCascadedStyle(rows[2].Cell));
+    }
+
     // A visited link takes only its colours from its visited style -- in which :visited matches it and
     // :link does not -- each with the alpha of its unvisited colour; everything else, and every query
     // but the renderer's cascade, is as if it were not visited.

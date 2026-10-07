@@ -147,6 +147,45 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     /// </summary>
     public void InvalidateComputedStyleCaches() => InvalidateAll();
 
+    /// <summary>
+    /// Clears the memoized results of <paramref name="elements"/>, and of no other element: for a host
+    /// that knows how far a change reaches. Every element whose style can depend on the change must be
+    /// in the set — those a selector reaches through it, and those that inherit from them.
+    /// </summary>
+    /// <remarks>
+    /// A pointer that moves from one table row to the next changes the state of a few elements, and a
+    /// sheet that styles <c>tr:hover &gt; td</c> restyles them and their descendants. Clearing every
+    /// element's results for it made the next query of any element in the document resolve it again.
+    /// The generation still moves, so a result being computed while the change happened is not stored.
+    /// </remarks>
+    public void InvalidateComputedStyleCaches(IReadOnlySet<DomElement> elements)
+    {
+        ArgumentNullException.ThrowIfNull(elements);
+        if (elements.Count == 0)
+            return;
+
+        lock (_sync)
+        {
+            _cacheGeneration++;
+            Remove(_cache, elements, static key => key.Element);
+            Remove(_sparseCache, elements, static key => key.Element);
+            Remove(_declaredCascadeCache, elements, static key => key.Element);
+            Remove(_cascadedStyleCache, elements, static key => key.Element);
+            Remove(_customPropertyCache, elements, static key => key.Element);
+        }
+
+        static void Remove<TKey, TValue>(ConcurrentDictionary<TKey, TValue> cache, IReadOnlySet<DomElement> elements,
+            Func<TKey, DomElement> elementOf)
+            where TKey : notnull
+        {
+            foreach (var entry in cache)
+            {
+                if (elements.Contains(elementOf(entry.Key)))
+                    cache.TryRemove(entry.Key, out _);
+            }
+        }
+    }
+
     /// <summary>Registers a parsed stylesheet under the given cascade origin.</summary>
     public void AddStyleSheet(CssStyleSheet sheet, CssOrigin origin = CssOrigin.Author)
     {
