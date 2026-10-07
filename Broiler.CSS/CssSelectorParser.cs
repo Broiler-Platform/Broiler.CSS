@@ -9,7 +9,7 @@ public static class CssSelectorParser
     public static CssSelectorList Parse(string? source)
     {
         var selectors = CssSyntax.SplitTopLevel(source ?? string.Empty, ',')
-            .Select(static selector => selector.Trim())
+            .Select(static selector => CssSyntax.TrimPreservingEscapes(selector))
             .Where(static selector => selector.Length > 0)
             .Select(static selector => new CssSelector(selector, CalculateSpecificity(selector)));
         return new CssSelectorList(selectors);
@@ -323,6 +323,12 @@ public static class CssSelectorParser
                 quote = character;
                 continue;
             }
+            // An escape is copied whole: the space of `#q\ r` is part of the id, not a combinator.
+            if (CssSyntax.IsValidEscape(selector, index))
+            {
+                index = CssSyntax.ConsumeEscape(selector, index) - 1;
+                continue;
+            }
             if (character == '[') bracketDepth++;
             else if (character == ']') bracketDepth--;
             else if (character == '(') parenthesisDepth++;
@@ -376,21 +382,7 @@ public static class CssSelectorParser
         return index;
     }
 
-    private static int ConsumeEscape(string text, int index)
-    {
-        index++;
-        var digits = 0;
-        while (index < text.Length && digits < 6 && Uri.IsHexDigit(text[index]))
-        {
-            index++;
-            digits++;
-        }
-        if (digits > 0 && index < text.Length && char.IsWhiteSpace(text[index]))
-            index++;
-        else if (digits == 0 && index < text.Length)
-            index++;
-        return index;
-    }
+    private static int ConsumeEscape(string text, int index) => CssSyntax.ConsumeEscape(text, index);
 
     /// <summary>
     /// The <em>key</em> of a complex selector: a simple selector its subject element must carry

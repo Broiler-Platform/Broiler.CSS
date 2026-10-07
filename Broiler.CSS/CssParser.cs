@@ -114,7 +114,7 @@ public sealed class CssParser
                 continue;
             }
 
-            var selectorText = CssSyntax.RemoveComments(text[position..Index]).Trim();
+            var selectorText = CssSyntax.TrimPreservingEscapes(CssSyntax.RemoveComments(text[position..Index]));
             // CSS Nesting §: a rule nested in a parent style rule (or in a conditional group
             // inside one) has its selector desugared relative to the parent. Top-level rules
             // (parentSelector == null) keep their absolute selector.
@@ -343,7 +343,7 @@ public sealed class CssParser
 
             // A `{` first: this segment is a nested style rule. Its prelude is the nested
             // selector list; desugar it against the parent and recurse into its block.
-            var prelude = CssSyntax.RemoveComments(text[position..delimiterIndex]).Trim();
+            var prelude = CssSyntax.TrimPreservingEscapes(CssSyntax.RemoveComments(text[position..delimiterIndex]));
             var ruleStart = position;
             var close = FindClosingBrace(text, delimiterIndex);
             if (close < 0)
@@ -391,7 +391,7 @@ public sealed class CssParser
     // unit and keeps its combined specificity.
     private static string DesugarNestedSelector(string nestedSelectorList, string parentSelector)
     {
-        var parent = parentSelector.Trim();
+        var parent = CssSyntax.TrimPreservingEscapes(parentSelector);
         var parentIsList = CountTopLevel(parent, ',') > 0;
         var parentRef = parentIsList ? $":is({parent})" : parent;
 
@@ -399,7 +399,7 @@ public sealed class CssParser
         var first = true;
         foreach (var candidate in CssSyntax.SplitTopLevel(nestedSelectorList, ','))
         {
-            var nested = candidate.Trim();
+            var nested = CssSyntax.TrimPreservingEscapes(candidate);
             if (nested.Length == 0)
                 continue;
             if (!first)

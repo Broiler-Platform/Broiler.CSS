@@ -367,6 +367,60 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", engine.GetComputedStyle(other).GetPropertyValue("color"));
     }
 
+    // ---- Acid3 test 28: `#\  { … }` hides <div id=" ">FAIL</div> -----------
+
+    // The rule's selector is backslash, space, then the space before the block: the id " ". Its
+    // second colour is invalid (hsla() needs percentages), so the earlier `transparent` stands.
+    [Fact]
+    public void Acid3_Escaped_Space_Id_Rule_Hides_Its_Element()
+    {
+        var (_, _, body) = NewDocument();
+        var fail = body.OwnerDocument!.CreateElement("div");
+        fail.Id = " ";
+        body.AppendChild(fail);
+
+        var engine = EngineWith(
+            "#\\  { color: transparent; color: hsla(0, 0, 0, 1); position: fixed; top: 10px; left: 10px; font: 40px Arial, sans-serif; }");
+        var style = engine.GetComputedStyle(fail);
+
+        Assert.Equal("fixed", style.GetPropertyValue("position"));
+        Assert.Equal("transparent", style.GetPropertyValue("color"));
+    }
+
+    // `#q\ r` is the id "q r". The rule index used to file it under the type `r`, so a <div> never
+    // saw it.
+    [Theory]
+    [InlineData("#q\\ r", "q r")]
+    [InlineData("#\\20 x", " x")]
+    [InlineData("#a\\ b", "a b")]
+    public void Escaped_Space_Id_Rules_Reach_Their_Element(string selector, string id)
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument!.CreateElement("div");
+        div.Id = id;
+        body.AppendChild(div);
+
+        var engine = EngineWith(selector + " { position: fixed; }");
+
+        Assert.Equal("fixed", engine.GetComputedStyle(div).GetPropertyValue("position"));
+    }
+
+    [Theory]
+    [InlineData("hsla(0, 0, 0, 1)", "transparent")]
+    [InlineData("hsl(0, 0, 0)", "transparent")]
+    [InlineData("hsla(0, 0%, 0%, 1)", "hsla(0, 0%, 0%, 1)")]
+    [InlineData("rgba(0, 0, 0, 0.5)", "rgba(0, 0, 0, 0.5)")]
+    public void An_Invalid_Legacy_Colour_Function_Yields_To_The_Earlier_Colour(string colour, string expected)
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument!.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith($"div {{ color: transparent; color: {colour}; }}");
+
+        Assert.Equal(expected, engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
     // A host that knows which elements a change reaches invalidates those alone: the hovered row moves,
     // the two rows and what is in them are resolved again, and every other element keeps its results.
     [Fact]

@@ -68,7 +68,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         if (string.IsNullOrWhiteSpace(selector))
             return false;
 
-        var parts = SplitParts(selector.Trim());
+        var parts = SplitParts(CssSyntax.TrimPreservingEscapes(selector));
         if (parts.Count == 0 || !MatchesCompound(element, parts[^1].Compound, scope))
             return false;
         return parts.Count == 1 || MatchBackwards(parts, parts.Count - 2, element, scope);
@@ -202,7 +202,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         var pseudos = ExtractPseudos(compound);
         var pseudoClasses = new PseudoClass[pseudos.Count];
         for (var index = 0; index < pseudos.Count; index++)
-            pseudoClasses[index] = new PseudoClass(pseudos[index].Name.ToLowerInvariant(), pseudos[index].Argument?.Trim());
+            pseudoClasses[index] = new PseudoClass(pseudos[index].Name.ToLowerInvariant(), pseudos[index].Argument is { } argument ? CssSyntax.TrimPreservingEscapes(argument) : null);
         if (pseudos.Count > 0)
             compound = RemovePseudos(compound, pseudos);
 
@@ -791,6 +791,15 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 current.Append(character);
                 continue;
             }
+            // An escape is copied whole: the space of `#a\ b` is part of the id and the one after
+            // `#\20` ends the escape; neither is a descendant combinator.
+            if (CssSyntax.IsValidEscape(selector, index))
+            {
+                var escapeEnd = CssSyntax.ConsumeEscape(selector, index);
+                current.Append(selector, index, escapeEnd - index);
+                index = escapeEnd - 1;
+                continue;
+            }
             if (character == '(') parentheses++;
             else if (character == ')') parentheses--;
             else if (character == '[') brackets++;
@@ -833,7 +842,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
 
     private static void AddPart(List<SelectorPart> parts, StringBuilder current, char combinator)
     {
-        var text = current.ToString().Trim();
+        var text = CssSyntax.TrimPreservingEscapes(current.ToString());
         if (text.Length > 0)
             parts.Add(new SelectorPart(combinator, text));
         current.Clear();
@@ -903,18 +912,19 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                 continue;
             }
             if (character is '"' or '\'') quote = character;
+            else if (CssSyntax.IsValidEscape(source, index)) index = CssSyntax.ConsumeEscape(source, index) - 1;
             else if (character == '(') parentheses++;
             else if (character == ')') parentheses--;
             else if (character == '[') brackets++;
             else if (character == ']') brackets--;
             else if (character == ',' && parentheses == 0 && brackets == 0)
             {
-                var item = source[start..index].Trim();
+                var item = CssSyntax.TrimPreservingEscapes(source[start..index]);
                 if (item.Length > 0) yield return item;
                 start = index + 1;
             }
         }
-        var tail = source[start..].Trim();
+        var tail = CssSyntax.TrimPreservingEscapes(source[start..]);
         if (tail.Length > 0) yield return tail;
     }
 
@@ -1009,19 +1019,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         return index;
     }
     
-    private static int ConsumeEscape(string source, int index)
-    {
-        index++;
-        var digits = 0;
-        while (index < source.Length && digits < 6 && Uri.IsHexDigit(source[index]))
-        {
-            index++;
-            digits++;
-        }
-        if (digits > 0 && index < source.Length && char.IsWhiteSpace(source[index])) index++;
-        else if (digits == 0 && index < source.Length) index++;
-        return index;
-    }
+    private static int ConsumeEscape(string source, int index) => CssSyntax.ConsumeEscape(source, index);
     
     private static string Unescape(string value)
     {
@@ -1093,6 +1091,15 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
         for (var index = 0; index < selector.Length; index++)
         {
             var character = selector[index];
+            // An escaped `*` is a name character, and inserting a space after a hex escape would
+            // only lengthen the escape: copy each escape through untouched.
+            if (CssSyntax.IsValidEscape(selector, index))
+            {
+                var escapeEnd = CssSyntax.ConsumeEscape(selector, index);
+                result.Append(selector, index, escapeEnd - index);
+                index = escapeEnd - 1;
+                continue;
+            }
             if (character == '[') brackets++;
             else if (character == ']') brackets--;
             else if (character == '(') parentheses++;

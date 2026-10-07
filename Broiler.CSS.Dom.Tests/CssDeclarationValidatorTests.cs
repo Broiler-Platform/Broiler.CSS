@@ -39,6 +39,30 @@ public sealed class CssDeclarationValidatorTests
     // Unknown vendor-prefixed color values are rejected; standard prefixes pass.
     [InlineData("color", "-acid3-bogus", false)]
     [InlineData("color", "-webkit-link", true)]
+    // A legacy (comma-separated) rgb()/hsl() is checked against the colour parser: hsl() needs
+    // percentages, so Acid3's `hsla(0, 0, 0, 1)` is invalid and dropped. Everything the parser
+    // cannot judge — modern syntax, nested math, substitutions, newer colour functions — passes.
+    [InlineData("color", "hsla(0, 0, 0, 1)", false)]
+    [InlineData("color", "HSL(0, 0, 0)", false)]
+    [InlineData("color", "rgb(0, 0, zero)", false)]
+    [InlineData("border-color", "red hsla(0, 0, 0, 1)", false)]
+    [InlineData("color", "hsla(0, 0%, 0%, 1)", true)]
+    [InlineData("color", "hsl(120deg, 100%, 50%)", true)]
+    [InlineData("color", "rgba(255, 0, 0, 0.5)", true)]
+    [InlineData("color", "rgb(10%, 20%, 30%)", true)]
+    [InlineData("border-color", "red hsla(0, 0%, 0%, 1)", true)]
+    [InlineData("color", "rgb(0 128 128 / 50%)", true)]
+    [InlineData("color", "hsl(120 100 50)", true)]
+    [InlineData("color", "rgb(calc(255), 0, 0)", true)]
+    [InlineData("color", "rgba(var(--rgb), 0.5)", true)]
+    [InlineData("color", "hsl(from red h s l)", true)]
+    [InlineData("color", "oklch(0.6 0.12 200)", true)]
+    [InlineData("color", "color-mix(in srgb, currentcolor 50%, red)", true)]
+    [InlineData("color", "light-dark(rgb(0, 0, 0), white)", true)]
+    [InlineData("color", "transparent", true)]
+    [InlineData("color", "currentcolor", true)]
+    [InlineData("color", "Canvas", true)]
+    [InlineData("color", "#0f08", true)]
     // CSS Values 4 calc-type-checking: a bare <number> (unitless, incl. 0) is a
     // type error as a top-level min()/max()/clamp() argument in a length context,
     // so the declaration is dropped (WPT css-values/max-unitless-zero-invalid).

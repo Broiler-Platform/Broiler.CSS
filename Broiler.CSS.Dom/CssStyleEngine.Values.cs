@@ -580,15 +580,65 @@ public sealed partial class CssStyleEngine
             case "outline-color":
                 // Reject unknown vendor-prefixed values (e.g. -acid3-bogus) while
                 // accepting named colors, #hex, rgb()/hsl(), transparent, etc.
-                return !v.StartsWith('-')
+                return (!v.StartsWith('-')
                     || v.StartsWith("-webkit-", StringComparison.Ordinal)
                     || v.StartsWith("-moz-", StringComparison.Ordinal)
                     || v.StartsWith("-ms-", StringComparison.Ordinal)
-                    || v.StartsWith("-o-", StringComparison.Ordinal);
+                    || v.StartsWith("-o-", StringComparison.Ordinal))
+                    && !HasInvalidLegacyColorFunction(v);
 
             default:
                 return true;
         }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="value"/> carries a legacy, comma-separated <c>rgb()</c>,
+    /// <c>rgba()</c>, <c>hsl()</c> or <c>hsla()</c> that the colour parser refuses — CSS Color 4
+    /// §5.1/§7.1: the legacy <c>hsl()</c> takes percentages for saturation and lightness, so
+    /// <c>hsla(0, 0, 0, 1)</c> is invalid and the declaration is dropped.
+    /// </summary>
+    /// <remarks>
+    /// Acid3 test 28 rests on this: <c>#\  { color: transparent; color: hsla(0, 0, 0, 1); … }</c>
+    /// must leave its "FAIL" transparent, and taking the invalid colour painted it black at the
+    /// top of the page. Only what <see cref="CssValueParser.TryParseColor"/> and
+    /// <see cref="CssColor4.TryParse"/> can judge in full is checked: the legacy comma syntax
+    /// with no nested function. The space-separated syntax (which also admits numbers and
+    /// <c>none</c>), math functions, relative colours and every other colour function still pass
+    /// unchecked; <c>var()</c>/<c>env()</c> never reach here. Each top-level token is checked, so
+    /// a <c>border-color</c> list is judged colour by colour.
+    /// </remarks>
+    private static bool HasInvalidLegacyColorFunction(string value)
+    {
+        if (value.IndexOf(',') < 0)
+            return false;
+
+        foreach (var token in SplitCssValues(value))
+        {
+            if (!IsLegacyColorFunction(token))
+                continue;
+            if (!CssValueParser.TryParseColor(token, out _) && !CssColor4.TryParse(token, out _))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsLegacyColorFunction(string token)
+    {
+        var open = token.IndexOf('(');
+        if (open < 0 || token[^1] != ')' || token.IndexOf('(', open + 1) >= 0)
+            return false;
+
+        var name = token.AsSpan(0, open);
+        if (!(name.Equals("rgb", StringComparison.OrdinalIgnoreCase)
+              || name.Equals("rgba", StringComparison.OrdinalIgnoreCase)
+              || name.Equals("hsl", StringComparison.OrdinalIgnoreCase)
+              || name.Equals("hsla", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return token.IndexOf(',', open) >= 0;
     }
 
     /// <summary>
