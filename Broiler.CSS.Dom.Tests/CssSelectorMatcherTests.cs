@@ -19,6 +19,49 @@ public sealed class CssSelectorMatcherTests
         Assert.False(matcher.Matches(tree.Second, "p:first-child"));
     }
 
+    [Theory]
+    [InlineData(":first-child")]
+    [InlineData(":last-child")]
+    [InlineData(":only-child")]
+    [InlineData(":nth-child(1)")]
+    [InlineData(":nth-last-child(1)")]
+    [InlineData(":first-of-type")]
+    [InlineData(":last-of-type")]
+    [InlineData(":only-of-type")]
+    [InlineData(":nth-of-type(1)")]
+    [InlineData(":nth-last-of-type(1)")]
+    public void Root_Element_Is_Not_A_Child_Of_Its_Document(string selector)
+    {
+        // Acid3 test 35: the root's parent is the document, and the root matches no
+        // child-indexed pseudo-class, as in Chromium and Firefox.
+        var document = new DomDocument();
+        var html = document.CreateElement("html");
+        var body = document.CreateElement("body");
+        document.AppendChild(html);
+        html.AppendChild(body);
+        var matcher = new CssSelectorMatcher();
+
+        Assert.False(matcher.Matches(html, selector));
+        Assert.True(matcher.Matches(html, ":root"));
+        Assert.True(matcher.Matches(body, selector));
+    }
+
+    [Fact]
+    public void Element_In_A_Fragment_Keeps_Its_Siblings()
+    {
+        var document = new DomDocument();
+        var fragment = document.CreateDocumentFragment();
+        var first = document.CreateElement("p");
+        var second = document.CreateElement("p");
+        fragment.AppendChild(first);
+        fragment.AppendChild(second);
+        var matcher = new CssSelectorMatcher();
+
+        Assert.True(matcher.Matches(first, ":first-child"));
+        Assert.False(matcher.Matches(second, ":first-child"));
+        Assert.True(matcher.Matches(second, ":last-child"));
+    }
+
     [Fact]
     public void Matches_Level_Four_Functional_Pseudo_Classes()
     {
