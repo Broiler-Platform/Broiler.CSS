@@ -54,9 +54,9 @@ public sealed partial class CssStyleEngine
             if (lower is not ("initial" or "inherit" or "unset" or "revert" or "revert-layer"))
                 continue;
 
-            // Preserve "inherit" verbatim so the computed snapshot mirrors the
-            // bridge's getComputedStyle() behaviour rather than eagerly folding
-            // it into the parent's value during keyword normalization.
+            // Preserve "inherit" here: it is folded to the parent's computed value
+            // after shorthand expansion (FoldInheritKeyword), which is the only point
+            // at which a `font: inherit` has become the longhands it stands for.
             if (lower == "inherit")
                 continue;
 

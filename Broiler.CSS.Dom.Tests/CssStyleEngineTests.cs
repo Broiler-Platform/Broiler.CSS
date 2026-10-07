@@ -1482,6 +1482,177 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", cascaded["color"]);
     }
 
+    // ---- `inherit` takes the parent's computed value ------------------------
+
+    // Acid3's score: `* { font: inherit }` and `#result { font-size: 5em }` over a 20px root. The
+    // spans are 100px, the paragraph's computed size; folding the paragraph's specified `5em` into
+    // them made the renderer resolve it again, against 100px, and draw the score at 500px.
+    [Fact]
+    public void Font_Inherit_Takes_The_Parents_Computed_Font_Size_Not_Its_Specified_Em()
+    {
+        var (document, _, body) = NewDocument();
+        var result = document.CreateElement("p");
+        result.Id = "result";
+        var score = document.CreateElement("span");
+        var instructions = document.CreateElement("p");
+        instructions.Id = "instructions";
+        var instructionsSpan = document.CreateElement("span");
+        body.AppendChild(result);
+        result.AppendChild(score);
+        body.AppendChild(instructions);
+        instructions.AppendChild(instructionsSpan);
+
+        var engine = EngineWith(
+            "* { font: inherit; line-height: 1.2; } html { font: 20px Arial, sans-serif; } " +
+            "#result { font-weight: bolder; font-size: 5em; } #instructions { font-size: 0.8em; }");
+
+        Assert.Equal("100px", engine.GetComputedStyle(result).GetPropertyValue("font-size"));
+        Assert.Equal("100px", engine.GetComputedStyle(score).GetPropertyValue("font-size"));
+        Assert.Equal("100px", engine.GetCascadedStyle(score)["font-size"]);
+        Assert.Equal("16px", engine.GetCascadedStyle(instructionsSpan)["font-size"]);
+
+        // The paragraph's own relative size reaches the renderer as written, which resolves it
+        // against the body's box -- 20px, the body's `inherit` folded to the root's computed size.
+        Assert.Equal("5em", engine.GetCascadedStyle(result)["font-size"]);
+        Assert.Equal("20px", engine.GetCascadedStyle(body)["font-size"]);
+    }
+
+    [Fact]
+    public void Font_Size_Inherit_Does_Not_Compound_Nested_Em_Sizes()
+    {
+        var (document, html, body) = NewDocument();
+        var outer = document.CreateElement("div");
+        outer.Id = "outer";
+        var inner = document.CreateElement("div");
+        inner.Id = "inner";
+        var leaf = document.CreateElement("span");
+        leaf.Id = "leaf";
+        var sized = document.CreateElement("span");
+        sized.Id = "sized";
+        body.AppendChild(outer);
+        outer.AppendChild(inner);
+        inner.AppendChild(leaf);
+        inner.AppendChild(sized);
+
+        var engine = EngineWith(
+            "html { font-size: 10px; } body { font-size: 2em; } #outer { font-size: 1.5em; } " +
+            "#inner, #leaf { font-size: inherit; } #sized { font-size: 0.5em; }");
+
+        Assert.Equal("10px", engine.GetComputedStyle(html).GetPropertyValue("font-size"));
+        Assert.Equal("20px", engine.GetComputedStyle(body).GetPropertyValue("font-size"));
+        Assert.Equal("30px", engine.GetComputedStyle(outer).GetPropertyValue("font-size"));
+        Assert.Equal("30px", engine.GetComputedStyle(inner).GetPropertyValue("font-size"));
+        Assert.Equal("30px", engine.GetComputedStyle(leaf).GetPropertyValue("font-size"));
+        Assert.Equal("15px", engine.GetComputedStyle(sized).GetPropertyValue("font-size"));
+
+        Assert.Equal("30px", engine.GetCascadedStyle(inner)["font-size"]);
+        Assert.Equal("30px", engine.GetCascadedStyle(leaf)["font-size"]);
+    }
+
+    [Fact]
+    public void Font_Size_Inherit_Takes_A_Resolved_Percentage()
+    {
+        var (document, html, body) = NewDocument();
+        var parent = document.CreateElement("div");
+        parent.Id = "p";
+        var child = document.CreateElement("span");
+        child.Id = "c";
+        body.AppendChild(parent);
+        parent.AppendChild(child);
+
+        var engine = EngineWith("html { font-size: 20px; } #p { font-size: 150%; } #c { font: inherit; }");
+
+        Assert.Equal("30px", engine.GetComputedStyle(parent).GetPropertyValue("font-size"));
+        Assert.Equal("30px", engine.GetComputedStyle(child).GetPropertyValue("font-size"));
+        Assert.Equal("30px", engine.GetCascadedStyle(child)["font-size"]);
+    }
+
+    [Fact]
+    public void Font_Family_Inherits_Through_A_Chain_Of_Font_Inherit()
+    {
+        var (document, _, body) = NewDocument();
+        var paragraph = document.CreateElement("p");
+        var span = document.CreateElement("span");
+        body.AppendChild(paragraph);
+        paragraph.AppendChild(span);
+
+        var engine = EngineWith("* { font: inherit; } html { font: 20px Arial, sans-serif; }");
+
+        // The body's own `font: inherit` folds to the root's family, and what is below it inherits
+        // that family rather than the body's literal keyword.
+        Assert.Equal("Arial, sans-serif", engine.GetComputedStyle(body).GetPropertyValue("font-family"));
+        Assert.Equal("Arial, sans-serif", engine.GetComputedStyle(span).GetPropertyValue("font-family"));
+        Assert.Equal("Arial, sans-serif", engine.GetCascadedStyle(body)["font-family"]);
+        Assert.Equal("Arial, sans-serif", engine.GetCascadedStyle(paragraph)["font-family"]);
+        Assert.Equal("Arial, sans-serif", engine.GetCascadedStyle(span)["font-family"]);
+    }
+
+    // A pseudo-element inherits from its originating element, not from that element's parent.
+    [Fact]
+    public void A_Pseudo_Element_Inherits_From_Its_Originating_Element()
+    {
+        var (document, _, body) = NewDocument();
+        var paragraph = document.CreateElement("p");
+        paragraph.Id = "p";
+        body.AppendChild(paragraph);
+
+        var engine = EngineWith(
+            "body { font-size: 10px; color: red; } #p { font-size: 20px; color: green; } " +
+            "#p::before { content: 'x'; font-size: 2em; } #p::after { content: 'y'; font-size: inherit; color: inherit; }");
+
+        var before = engine.GetComputedStyle(paragraph, pseudoElement: "::before");
+        Assert.Equal("40px", before.GetPropertyValue("font-size"));
+        Assert.Equal("green", before.GetPropertyValue("color"));
+
+        var after = engine.GetCascadedStyle(paragraph, "::after");
+        Assert.Equal("20px", after["font-size"]);
+        Assert.Equal("green", after["color"]);
+    }
+
+    [Theory]
+    [InlineData("12pt", "16px")]
+    [InlineData("larger", "24px")]
+    [InlineData("2rem", "40px")]
+    [InlineData("small", "small")]
+    [InlineData("calc(1em + 2px)", "calc(1em + 2px)")]
+    public void Font_Size_Computes_To_A_Px_Length_Where_The_Engine_Can_Resolve_It(string specified, string expected)
+    {
+        var (document, _, body) = NewDocument();
+        var div = document.CreateElement("div");
+        div.Id = "d";
+        body.AppendChild(div);
+
+        var engine = EngineWith($"html {{ font-size: 20px; }} #d {{ font-size: {specified}; }}");
+
+        Assert.Equal(expected, engine.GetComputedStyle(div).GetPropertyValue("font-size"));
+    }
+
+    [Fact]
+    public void Em_Under_An_Absolute_Size_Keyword_Resolves_Against_The_Keywords_Size()
+    {
+        var (document, _, body) = NewDocument();
+        var code = document.CreateElement("code");
+        code.Id = "code";
+        var em = document.CreateElement("span");
+        em.Id = "em";
+        body.AppendChild(code);
+        code.AppendChild(em);
+
+        var big = document.CreateElement("p");
+        big.Id = "big";
+        body.AppendChild(big);
+
+        var engine = EngineWith(
+            "body { font-size: large; } #big { font-size: 2em; } " +
+            "#code { font-family: monospace; font-size: medium; } #em { font-size: 2em; }");
+
+        // A keyword stays a keyword, and is 18px (large) as the basis of its children's em.
+        Assert.Equal("large", engine.GetComputedStyle(body).GetPropertyValue("font-size"));
+        Assert.Equal("36px", engine.GetComputedStyle(big).GetPropertyValue("font-size"));
+        // monospace's `medium` is 13px, so 2em under it is 26px.
+        Assert.Equal("26px", engine.GetComputedStyle(em).GetPropertyValue("font-size"));
+    }
+
     [Fact]
     public void GetCascadedStyle_Border_Shorthand_Resets_Omitted_Color_To_Initial()
     {

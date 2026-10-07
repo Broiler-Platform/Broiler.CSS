@@ -557,7 +557,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         // Parent computed style — used only to resolve relative font-weight and to fold
         // the `inherit` keyword, never to backfill inherited properties (the renderer's
         // own InheritStyle does that).
-        var parentElement = element.ParentElement;
+        var parentElement = InheritanceParent(element, pseudoElement);
         IReadOnlyDictionary<string, string>? parentProps = null;
         if (parentElement is not null && ancestorsInProgress.Add(parentElement))
         {
@@ -649,6 +649,13 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         }
     }
 
+    /// <summary>
+    /// The element a style inherits from: a pseudo-element's is its originating element, and a
+    /// principal box's its parent element.
+    /// </summary>
+    private static DomElement? InheritanceParent(DomElement element, string? pseudoElement) =>
+        pseudoElement is null ? element.ParentElement : element;
+
     private static void FoldInheritKeyword(
         Dictionary<string, string> computed,
         IReadOnlyDictionary<string, string>? parentProps)
@@ -667,6 +674,173 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
                 computed.Remove(key);
         }
     }
+
+    // ---- Computed font size ------------------------------------------------
+    //
+    // CSS Fonts 4 §2.5: font-size computes to an absolute length. The engine resolves every value
+    // whose length depends on where the element sits -- em, percentages, larger/smaller, math, rem
+    // and the viewport units -- and converts absolute units to px. The absolute-size
+    // keywords (small, medium, ...) are left as written: they mean the same thing wherever they are
+    // inherited, and the renderer sizes a keyword by the family it reaches (13px rather than 16px
+    // for monospace), which a px value would lose. ex, ch, calc() and the like need font metrics or
+    // arithmetic the engine does not have, and also stay as written.
+
+    private const double InitialFontSizePx = 16.0;
+
+    // CSS Fonts 4 §2.5's absolute-size table, for medium = 16px.
+    private static readonly Dictionary<string, double> AbsoluteSizeKeywordPx = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["xx-small"] = 9,
+        ["x-small"] = 10,
+        ["small"] = 13,
+        ["medium"] = 16,
+        ["large"] = 18,
+        ["x-large"] = 24,
+        ["xx-large"] = 32,
+        ["xxx-large"] = 48,
+    };
+
+    // CSS Fonts 4 §2.5: larger/smaller scale the parent's size by this ratio.
+    private const double RelativeSizeRatio = 1.2;
+
+    private void ResolveComputedFontSize(
+        Dictionary<string, string> computed,
+        DomElement? parentElement,
+        IReadOnlyDictionary<string, string>? parentProps,
+        HashSet<DomElement> ancestorsInProgress)
+    {
+        if (!computed.TryGetValue("font-size", out var specified) || string.IsNullOrWhiteSpace(specified))
+            return;
+
+        // The root's parent font size is the initial one. A parent whose size could not be made
+        // absolute leaves a relative size as written rather than guessing a basis for it.
+        double? parentPx = parentProps is null
+            ? InitialFontSizePx
+            : TryGetComputedFontSizePx(parentProps, out var parentSize) ? parentSize : null;
+
+        if (TryResolveFontSizePx(specified.Trim(), parentPx, () => RootFontSizePx(parentElement, ancestorsInProgress), out var px))
+            computed["font-size"] = FormatFontSizePx(px);
+    }
+
+    private bool TryResolveFontSizePx(string value, double? parentPx, Func<double?> rootPx, out double px)
+    {
+        px = 0;
+        var lower = value.ToLowerInvariant();
+        switch (lower)
+        {
+            case "larger":
+                if (parentPx is not { } larger)
+                    return false;
+                px = larger * RelativeSizeRatio;
+                return true;
+            case "smaller":
+                if (parentPx is not { } smaller)
+                    return false;
+                px = smaller / RelativeSizeRatio;
+                return true;
+            case "math":
+                // No math-depth is modelled, so the scaling factor is 1 (see Broiler.Layout).
+                if (parentPx is not { } math)
+                    return false;
+                px = math;
+                return true;
+        }
+
+        if (!CssValueParser.TryParseNumeric(lower, out var numeric) || numeric.Number < 0)
+            return false;
+
+        var n = numeric.Number;
+        double? resolved = numeric.Unit switch
+        {
+            CssUnit.Px => n,
+            CssUnit.None when n == 0 => 0,
+            CssUnit.Pt => n * CssMetrics.PtToPx,
+            CssUnit.Pc => n * CssMetrics.PxPerPica,
+            CssUnit.In => n * CssMetrics.PxPerInch,
+            CssUnit.Cm => n * CssMetrics.PxPerCm,
+            CssUnit.Mm => n * CssMetrics.PxPerMm,
+            CssUnit.Q => n * CssMetrics.PxPerQ,
+            CssUnit.Em => n * parentPx,
+            CssUnit.Percent => n / 100.0 * parentPx,
+            CssUnit.Rem => n * rootPx(),
+            CssUnit.Vw => ViewportPercent(n, _environment.ViewportWidth),
+            CssUnit.Vh => ViewportPercent(n, _environment.ViewportHeight),
+            CssUnit.Vmin => ViewportPercent(n, Math.Min(_environment.ViewportWidth, _environment.ViewportHeight)),
+            CssUnit.Vmax => ViewportPercent(n, Math.Max(_environment.ViewportWidth, _environment.ViewportHeight)),
+            _ => null,
+        };
+
+        if (resolved is not { } result || double.IsNaN(result) || double.IsInfinity(result))
+            return false;
+
+        px = result;
+        return true;
+
+        static double? ViewportPercent(double n, double extent) => extent > 0 ? n / 100.0 * extent : null;
+    }
+
+    /// <summary>
+    /// The font size, in px, that a computed-style map gives: its px length, or the size its
+    /// absolute-size keyword stands for in its own family.
+    /// </summary>
+    private static bool TryGetComputedFontSizePx(IReadOnlyDictionary<string, string> computed, out double px)
+    {
+        px = 0;
+        if (!computed.TryGetValue("font-size", out var value) || string.IsNullOrWhiteSpace(value))
+            return false;
+
+        value = value.Trim();
+        if (AbsoluteSizeKeywordPx.TryGetValue(value, out var keywordPx))
+        {
+            // Browsers make `medium` 13px for the generic monospace family alone (see the
+            // renderer's MonospaceKeywordScale), and scale every keyword with it.
+            var family = computed.GetValueOrDefault("font-family")?.Trim();
+            px = string.Equals(family, "monospace", StringComparison.OrdinalIgnoreCase)
+                ? keywordPx * 13.0 / 16.0
+                : keywordPx;
+            return true;
+        }
+
+        if (CssValueParser.TryParseNumeric(value, out var numeric) && numeric.Unit == CssUnit.Px &&
+            !double.IsNaN(numeric.Number) && !double.IsInfinity(numeric.Number))
+        {
+            px = numeric.Number;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The root element's computed font size, which <c>rem</c> is relative to, found from the
+    /// element a style inherits from; for the root itself, which has none, the initial font size.
+    /// </summary>
+    private double? RootFontSizePx(DomElement? inheritanceParent, HashSet<DomElement> ancestorsInProgress)
+    {
+        if (inheritanceParent is null)
+            return InitialFontSizePx;
+
+        var root = inheritanceParent;
+        while (root.ParentElement is { } parent)
+            root = parent;
+
+        if (!ancestorsInProgress.Add(root))
+            return null;
+
+        try
+        {
+            return TryGetComputedFontSizePx(GetComputedStyleInternal(root, ancestorsInProgress).AsMap(), out var px)
+                ? px
+                : null;
+        }
+        finally
+        {
+            ancestorsInProgress.Remove(root);
+        }
+    }
+
+    private static string FormatFontSizePx(double px) =>
+        $"{Math.Round(px, 4).ToString("0.####", CultureInfo.InvariantCulture)}px";
 
     private CssComputedStyle GetComputedStyleInternal(DomElement element, HashSet<DomElement> ancestorsInProgress)
     {
@@ -708,8 +882,9 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         var computed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         // Inheritance source: the parent element's computed style (full), or its sparse
-        // projection when sparseInheritance is set. Guard against cycles in malformed trees.
-        var parentElement = element.ParentElement;
+        // projection when sparseInheritance is set; for a pseudo-element, the originating
+        // element's. Guard against cycles in malformed trees.
+        var parentElement = InheritanceParent(element, pseudoElement);
         IReadOnlyDictionary<string, string>? parentProps = null;
         if (parentElement is not null && ancestorsInProgress.Add(parentElement))
         {
@@ -746,6 +921,20 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             ? pwn
             : 400;
         ResolveFontWeightKeywords(computed, parentWeight);
+
+        // 6b. Computed values the rest of the tree inherits from. `inherit` takes the parent's
+        // computed value (folded only now, after shorthand expansion, so a `font: inherit` is
+        // folded too), and a relative font size becomes the length it computes to. This map is
+        // what a child inherits, and what GetCascadedStyle folds a child's `inherit` to, so a value
+        // left as written here was resolved a second time further down: `font-size: 5em` inherited
+        // as `5em` drew a child five times its parent, and a body's `font-family: inherit` reached
+        // every descendant as the literal keyword. The sparse-inheritance projection is the
+        // bridge's own model, which folds `inherit` itself, and is left as it was.
+        if (!sparseInheritance)
+        {
+            FoldInheritKeyword(computed, parentProps);
+            ResolveComputedFontSize(computed, parentElement, parentProps, ancestorsInProgress);
+        }
 
         // 7. Inheritance backfill for inherited properties not otherwise set.
         if (parentProps != null)
