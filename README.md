@@ -50,8 +50,9 @@ CI builds and tests `Release` on Ubuntu and Windows, then packs and verifies bot
 packages on Ubuntu and attaches them as `nuget-packages`. **Publish** (manual, or a
 `v0.1.0-preview.N` tag) resolves the next preview version, reruns CI with it, verifies a
 fresh consumer restore against nuget.org, and pushes the validated packages and their
-symbols to nuget.org with the `NUGET_API_KEY` secret. `dry-run=true` is the default for
-manual runs.
+symbols to nuget.org with the `NUGET_API_KEY` secret. Every Publish run pushes; there is
+no dry-run mode. The no-push rehearsal is CI itself, which packs every package and verifies
+a fresh consumer restore from nuget.org on every push and pull request.
 
 The preview number is cumulative: it is one past the highest preview either package has
 ever had on nuget.org, and never below the `VersionSuffix` floor in
