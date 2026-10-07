@@ -90,6 +90,10 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     // and the box walk then reads results instead of computing them. Same lifecycle and same
     // generation guard as the sibling caches. The returned map is shared and read-only to callers.
     private readonly ConcurrentDictionary<(DomElement Element, string? Pseudo, bool IncludeInline, RenderMode Mode), IReadOnlyDictionary<string, string>> _cascadedStyleCache = [];
+    // Each element's resolved custom properties (GetResolvedCustomProperties): its parent's map and its
+    // own cascade, finalized. Every descendant's map starts from it, so without the memo each element's
+    // styles rebuilt the maps of all its ancestors. Same lifecycle and generation guard as the others.
+    private readonly ConcurrentDictionary<(DomElement Element, RenderMode Mode), IReadOnlyDictionary<string, string>> _customPropertyCache = new();
     // Bumped by InvalidateAll; a declared-cascade computation captures it up front and
     // only memoizes its result if it is unchanged at the end, so a mid-cascade
     // stylesheet re-sync (host callback during selector matching, see the _sheets
@@ -142,6 +146,45 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
     /// change the engine's DOM-mutation subscription does not observe.
     /// </summary>
     public void InvalidateComputedStyleCaches() => InvalidateAll();
+
+    /// <summary>
+    /// Clears the memoized results of <paramref name="elements"/>, and of no other element: for a host
+    /// that knows how far a change reaches. Every element whose style can depend on the change must be
+    /// in the set — those a selector reaches through it, and those that inherit from them.
+    /// </summary>
+    /// <remarks>
+    /// A pointer that moves from one table row to the next changes the state of a few elements, and a
+    /// sheet that styles <c>tr:hover &gt; td</c> restyles them and their descendants. Clearing every
+    /// element's results for it made the next query of any element in the document resolve it again.
+    /// The generation still moves, so a result being computed while the change happened is not stored.
+    /// </remarks>
+    public void InvalidateComputedStyleCaches(IReadOnlySet<DomElement> elements)
+    {
+        ArgumentNullException.ThrowIfNull(elements);
+        if (elements.Count == 0)
+            return;
+
+        lock (_sync)
+        {
+            _cacheGeneration++;
+            Remove(_cache, elements, static key => key.Element);
+            Remove(_sparseCache, elements, static key => key.Element);
+            Remove(_declaredCascadeCache, elements, static key => key.Element);
+            Remove(_cascadedStyleCache, elements, static key => key.Element);
+            Remove(_customPropertyCache, elements, static key => key.Element);
+        }
+
+        static void Remove<TKey, TValue>(ConcurrentDictionary<TKey, TValue> cache, IReadOnlySet<DomElement> elements,
+            Func<TKey, DomElement> elementOf)
+            where TKey : notnull
+        {
+            foreach (var entry in cache)
+            {
+                if (elements.Contains(elementOf(entry.Key)))
+                    cache.TryRemove(entry.Key, out _);
+            }
+        }
+    }
 
     /// <summary>Registers a parsed stylesheet under the given cascade origin.</summary>
     public void AddStyleSheet(CssStyleSheet sheet, CssOrigin origin = CssOrigin.Author)
@@ -535,7 +578,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         CollectCascadedDeclarations(element, pseudoElement, computed, includeInlineStyle);
 
         // 2. Custom properties: inheritance, registered defaults, var().
-        MergeResolvedCustomProperties(computed, element, registrations);
+        MergeResolvedCustomProperties(computed, element, pseudoElement, registrations);
         ResolveKnownCustomProperties(computed);
 
         // 3. CSS-wide keywords (initial/unset/revert resolved; inherit preserved here).
@@ -688,7 +731,7 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         CollectCascadedDeclarations(element, pseudoElement, computed, includeInlineStyle: true);
 
         // 3. Custom properties: resolve inheritance, registered defaults, and var().
-        MergeResolvedCustomProperties(computed, element, registrations);
+        MergeResolvedCustomProperties(computed, element, pseudoElement, registrations);
         ResolveKnownCustomProperties(computed);
 
         // 4. CSS-wide keywords (initial / unset / revert; inherit preserved).
@@ -1232,6 +1275,25 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         if (value is null)
             return;
 
+        foreach (var (name, longhandValue) in ShorthandLonghands(property, value))
+            AddSlot(winners, name, longhandValue, rank, layerIndex, specificity, order);
+    }
+
+    // What a declaration expands to depends on the declaration alone, and the cascade expands every
+    // declaration of every rule an element matches, for every element: a declaration's longhands are
+    // kept. Bounded like the matcher's selector splits.
+    private static readonly ConcurrentDictionary<(string Property, string Value), KeyValuePair<string, string>[]> LonghandCache = new();
+    private const int LonghandCacheLimit = 8192;
+
+    /// <summary>
+    /// The longhands a declaration of <paramref name="property"/> sets, each with its part of
+    /// <paramref name="value"/>, or none when it is not a modelled shorthand.
+    /// </summary>
+    private static KeyValuePair<string, string>[] ShorthandLonghands(string property, string value)
+    {
+        if (LonghandCache.TryGetValue((property, value), out var cached))
+            return cached;
+
         // Expand the shorthand in isolation: ExpandCssShorthands is additive and only
         // fills longhands, so every key it adds beyond the shorthand itself is exactly
         // one of that shorthand's longhands, with the shorthand's own value split per
@@ -1241,15 +1303,15 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             [property] = value,
         };
         ExpandCssShorthands(expanded);
-        if (expanded.Count == 1)
-            return; // not a modelled shorthand — nothing expanded
 
-        foreach (var (name, longhandValue) in expanded)
-        {
-            if (string.Equals(name, property, StringComparison.OrdinalIgnoreCase))
-                continue; // the shorthand key itself is already placed by the caller
-            AddSlot(winners, name, longhandValue, rank, layerIndex, specificity, order);
-        }
+        var longhands = expanded.Count == 1
+            ? [] // not a modelled shorthand — nothing expanded
+            : expanded.Where(kv => !string.Equals(kv.Key, property, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        if (LonghandCache.Count >= LonghandCacheLimit)
+            LonghandCache.Clear();
+        LonghandCache.TryAdd((property, value), longhands);
+        return longhands;
     }
 
     private static int CascadeRank(CssOrigin origin, bool important) =>

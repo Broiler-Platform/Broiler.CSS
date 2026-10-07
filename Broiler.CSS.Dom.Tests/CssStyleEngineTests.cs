@@ -367,6 +367,45 @@ public sealed class CssStyleEngineTests
         Assert.Equal("blue", engine.GetComputedStyle(other).GetPropertyValue("color"));
     }
 
+    // A host that knows which elements a change reaches invalidates those alone: the hovered row moves,
+    // the two rows and what is in them are resolved again, and every other element keeps its results.
+    [Fact]
+    public void Invalidating_Some_Elements_Resolves_Those_Alone_Again()
+    {
+        var (document, _, body) = NewDocument();
+        var table = document.CreateElement("table");
+        body.AppendChild(table);
+        var rows = new List<(DomElement Row, DomElement Cell)>();
+        for (var index = 0; index < 3; index++)
+        {
+            var row = document.CreateElement("tr");
+            var cell = document.CreateElement("td");
+            row.AppendChild(cell);
+            table.AppendChild(row);
+            rows.Add((row, cell));
+        }
+
+        var state = new MutableUserActionState { Hovered = rows[0].Row };
+        var engine = EngineWith("td { color: blue; } tr:hover > td { color: red; }", state);
+
+        Assert.Equal("red", engine.GetComputedStyle(rows[0].Cell).GetPropertyValue("color"));
+        var untouched = engine.GetComputedStyle(rows[2].Cell);
+        var untouchedCascade = engine.GetCascadedStyle(rows[2].Cell);
+        Assert.Equal("blue", untouched.GetPropertyValue("color"));
+        Assert.Equal("blue", engine.GetComputedStyle(rows[1].Cell).GetPropertyValue("color"));
+
+        state.Hovered = rows[1].Row;
+        engine.InvalidateComputedStyleCaches(new HashSet<DomElement>(ReferenceEqualityComparer.Instance)
+        {
+            rows[0].Row, rows[0].Cell, rows[1].Row, rows[1].Cell,
+        });
+
+        Assert.Equal("blue", engine.GetComputedStyle(rows[0].Cell).GetPropertyValue("color"));
+        Assert.Equal("red", engine.GetComputedStyle(rows[1].Cell).GetPropertyValue("color"));
+        Assert.Same(untouched, engine.GetComputedStyle(rows[2].Cell));
+        Assert.Same(untouchedCascade, engine.GetCascadedStyle(rows[2].Cell));
+    }
+
     // A visited link takes only its colours from its visited style -- in which :visited matches it and
     // :link does not -- each with the alpha of its unvisited colour; everything else, and every query
     // but the renderer's cascade, is as if it were not visited.
@@ -830,6 +869,74 @@ public sealed class CssStyleEngineTests
         // --loop is cyclic → guaranteed-invalid, so the var() falls back to 10px.
         var width = engine.GetComputedStyle(div).GetPropertyValue("width");
         Assert.Equal("10px", width);
+    }
+
+    // Each element's styles used to rebuild the custom properties of all its ancestors, twice, so a
+    // document's styles cost the sum of its elements' depths: 40% of every pointer move on
+    // html5test.com, a page that declares no custom property at all.
+    [Theory]
+    [InlineData("")]
+    [InlineData("html { --accent: teal; } div { color: var(--accent); }")]
+    public void Custom_Properties_Are_Resolved_Once_Per_Element(string css)
+    {
+        var (_, html, body) = NewDocument();
+        var elements = new List<DomElement> { html, body };
+        var parent = body;
+        for (var depth = 0; depth < 40; depth++)
+        {
+            var div = body.OwnerDocument.CreateElement("div");
+            parent.AppendChild(div);
+            elements.Add(div);
+            parent = div;
+        }
+
+        var engine = EngineWith(css);
+        foreach (var element in elements)
+        {
+            engine.GetComputedStyle(element);
+            engine.GetCascadedStyle(element);
+            engine.GetCascadedStyle(element, includeInlineStyle: true);
+        }
+
+        Assert.Equal(elements.Count, engine.CustomPropertyResolutionCount);
+        if (css.Length > 0)
+            Assert.Equal("teal", engine.GetComputedStyle(parent).GetPropertyValue("color"));
+    }
+
+    // An ancestor's custom properties come from its whole cascade, inline style included, read from
+    // the engine's inline source. They came from its `style` attribute, which a host's inline source
+    // stands in for: HtmlBridge's holds what a script set, which never reaches the attribute.
+    [Fact]
+    public void An_Ancestors_Inline_Custom_Property_Comes_From_The_Inline_Source()
+    {
+        var (_, html, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        body.AppendChild(div);
+
+        var engine = EngineWith("div { color: var(--accent, red); }");
+        engine.SetInlineStyleSource(element => ReferenceEquals(element, html) ? "--accent: green" : null);
+
+        Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
+        Assert.Equal("green", engine.GetCascadedStyle(div)["color"]);
+    }
+
+    // The renderer's cascade leaves inline style out of the ordinary properties, but an element's own
+    // custom properties always included its inline ones -- after which its sheet's were laid over them
+    // again, so a sheet's `--accent` beat an inline one.
+    [Fact]
+    public void An_Inline_Custom_Property_Beats_A_Sheets_In_The_Renderers_Cascade()
+    {
+        var (_, _, body) = NewDocument();
+        var div = body.OwnerDocument.CreateElement("div");
+        div.SetAttribute("style", "--accent: green");
+        body.AppendChild(div);
+
+        var engine = EngineWith("div { --accent: red; color: var(--accent); }");
+        var cascaded = engine.GetCascadedStyle(div);
+
+        Assert.Equal("green", cascaded["--accent"]);
+        Assert.Equal("green", cascaded["color"]);
+        Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
     }
 
     [Fact]
