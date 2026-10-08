@@ -1583,13 +1583,11 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
             if (!suffix.Equals(pseudoElement, StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            baseSelector = CssSyntax.TrimPreservingEscapes(selector[..doubleColonIndex]);
             // A bare pseudo-element selector (e.g. `::backdrop`) has an empty base
             // and is equivalent to `*::backdrop`: it targets the pseudo-element of
             // any originating element. Match it as the universal selector rather
             // than rejecting it (which dropped author `::backdrop { … }` rules).
-            if (baseSelector.Length == 0)
-                baseSelector = "*";
+            baseSelector = OriginatingSelector(selector[..doubleColonIndex]);
             return true;
         }
 
@@ -1597,10 +1595,37 @@ public sealed partial class CssStyleEngine(ICssSelectorStateProvider? stateProvi
         if (!selector.EndsWith(singleColonSuffix, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        baseSelector = CssSyntax.TrimPreservingEscapes(selector[..^singleColonSuffix.Length]);
-        if (baseSelector.Length == 0)
-            baseSelector = "*";
+        baseSelector = OriginatingSelector(selector[..^singleColonSuffix.Length]);
         return true;
+    }
+
+    /// <summary>
+    /// The selector for a pseudo-element's originating element: <paramref name="prefix"/>, what
+    /// precedes the pseudo-element, with a universal selector where its compound was empty.
+    /// </summary>
+    /// <remarks>
+    /// A pseudo-element belongs to the compound it ends, so <c>.nose div :after</c> is
+    /// <c>.nose div *::after</c>: an after box for every element inside a div inside the nose. Cutting
+    /// the pseudo-element off and trimming left <c>.nose div</c>, which gave a div the box as well;
+    /// Acid2 then drew a black bar across the face under its nose.
+    /// </remarks>
+    private static string OriginatingSelector(string prefix)
+    {
+        var origin = CssSyntax.TrimPreservingEscapes(prefix);
+        if (origin.Length == 0)
+            return "*";
+
+        var endedWithWhitespace = origin.Length < prefix.TrimStart().Length;
+        var endedWithCombinator = origin[^1] is '>' or '+' or '~' && !IsEscaped(origin, origin.Length - 1);
+        return endedWithWhitespace || endedWithCombinator ? origin + " *" : origin;
+    }
+
+    private static bool IsEscaped(string text, int index)
+    {
+        var backslashes = 0;
+        while (index - backslashes - 1 >= 0 && text[index - backslashes - 1] == '\\')
+            backslashes++;
+        return backslashes % 2 == 1;
     }
 
     private static bool IsPropertyAllowedForPseudoElement(string? pseudoElement, string propertyName) =>

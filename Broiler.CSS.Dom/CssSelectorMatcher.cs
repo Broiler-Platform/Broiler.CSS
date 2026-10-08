@@ -217,7 +217,7 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                     match.Groups["name"].Value.Trim(),
                     match.Groups["op"].Success ? match.Groups["op"].Value : null,
                     match.Groups["value"].Success
-                        ? match.Groups["value"].Value.Trim().Trim('"', '\'')
+                        ? AttributeValue(match.Groups["value"].Value)
                         : null,
                     match.Groups["flag"].Success
                         ? char.ToLowerInvariant(match.Groups["flag"].Value[0]) == 'i'
@@ -1051,6 +1051,18 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     
     private static int ConsumeEscape(string source, int index) => CssSyntax.ConsumeEscape(source, index);
     
+    /// <summary>An attribute selector's value as text: its quotes removed and its escapes decoded.</summary>
+    private static string AttributeValue(string token)
+    {
+        if (token.Length >= 2 && token[0] is '"' or '\'' && token[^1] == token[0])
+        {
+            // CSS Syntax §4.3.5: an escaped newline inside a string continues the line.
+            var content = token[1..^1].Replace("\\\r\n", "").Replace("\\\n", "").Replace("\\\r", "").Replace("\\\f", "");
+            return Unescape(content);
+        }
+        return Unescape(token);
+    }
+
     private static string Unescape(string value)
     {
         var result = new StringBuilder(value.Length);
@@ -1522,6 +1534,8 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     private readonly record struct AttributeFilter(string Name, string? Operator, string? Value, bool? CaseInsensitive);
     private readonly record struct Pseudo(string Name, string? Argument, int Start, int Length);
 
-    [GeneratedRegex(@"\[\s*(?<name>[^\s~|^$*=\]]+)\s*(?:(?<op>[~|^$*]?=)\s*(?<value>(?:'[^']*'|""[^""]*""|[^\]\s]+))(?:\s+(?<flag>[iIsS]))?)?\s*\]", RegexOptions.Compiled)]
+    // A value is a string or an identifier, either of which may hold escapes: `[class=second\ two]`
+    // is the value "second two", as Acid2's second line of face needs.
+    [GeneratedRegex(@"\[\s*(?<name>[^\s~|^$*=\]]+)\s*(?:(?<op>[~|^$*]?=)\s*(?<value>(?:'(?:[^'\\]|\\[\s\S])*'|""(?:[^""\\]|\\[\s\S])*""|(?:[^\]\s\\'""]|\\(?:[0-9a-fA-F]{1,6}\s?|[\s\S]))+))(?:\s+(?<flag>[iIsS]))?)?\s*\]", RegexOptions.Compiled)]
     private static partial Regex AttributeRegex();
 }
