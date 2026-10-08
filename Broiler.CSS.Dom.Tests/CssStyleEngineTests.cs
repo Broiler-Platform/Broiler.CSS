@@ -1624,6 +1624,68 @@ public sealed class CssStyleEngineTests
         Assert.Equal("green", after["color"]);
     }
 
+    // Acid2's nose: `.nose div :after` gives an after box to each element inside a div inside the
+    // nose. The nose's own div is inside the nose but in no div there, so it gets none.
+    [Theory]
+    [InlineData(".nose div    :after")]
+    [InlineData(".nose div ::after")]
+    [InlineData(".nose div > :after")]
+    public void A_Pseudo_Element_After_A_Combinator_Belongs_To_A_Universal_Compound(string selector)
+    {
+        var (document, _, body) = NewDocument();
+        var nose = document.CreateElement("div");
+        nose.ClassName = "nose";
+        var outer = document.CreateElement("div");
+        var inner = document.CreateElement("div");
+        body.AppendChild(nose);
+        nose.AppendChild(outer);
+        outer.AppendChild(inner);
+
+        var engine = EngineWith(selector + " { content: 'x'; }");
+
+        Assert.False(engine.GetCascadedStyle(outer, "::after").ContainsKey("content"));
+        Assert.Equal("'x'", engine.GetCascadedStyle(inner, "::after")["content"]);
+    }
+
+    // Acid2's second line of face. `[class=second\ two]` is the value "second two"; the same
+    // selector without the backslash is invalid and its rule is dropped.
+    [Fact]
+    public void An_Attribute_Value_May_Hold_An_Escaped_Space()
+    {
+        var (document, _, body) = NewDocument();
+        var blockquote = document.CreateElement("blockquote");
+        blockquote.ClassName = "first one";
+        var address = document.CreateElement("address");
+        address.ClassName = "second two";
+        body.AppendChild(blockquote);
+        blockquote.AppendChild(address);
+
+        var engine = EngineWith(
+            "[class~=one][class~=first] [class=second\\ two][class=\"second two\"] { float: right; background-color: yellow; } " +
+            "[class=second two] { background-color: red; }");
+
+        var style = engine.GetComputedStyle(address);
+        Assert.Equal("right", style.GetPropertyValue("float"));
+        Assert.Equal("yellow", style.GetPropertyValue("background-color"));
+    }
+
+    [Theory]
+    [InlineData("[title=a\\ b]", "a b")]
+    [InlineData("[title=\"a\\\"b\"]", "a\"b")]
+    [InlineData("[title='it\\'s']", "it's")]
+    [InlineData("[title=\\31 x]", "1x")]
+    public void Attribute_Values_Decode_Their_Escapes(string selector, string title)
+    {
+        var (document, _, body) = NewDocument();
+        var div = document.CreateElement("div");
+        div.SetAttribute("title", title);
+        body.AppendChild(div);
+
+        var engine = EngineWith(selector + " { color: green; }");
+
+        Assert.Equal("green", engine.GetComputedStyle(div).GetPropertyValue("color"));
+    }
+
     [Theory]
     [InlineData("12pt", "16px")]
     [InlineData("larger", "24px")]
