@@ -387,6 +387,21 @@ public sealed class CssStyleEngineTests
         Assert.Equal("transparent", style.GetPropertyValue("color"));
     }
 
+    // Acid3 writes <input type=HIDDEN>; the user-agent rule input[type="hidden"] must still hide
+    // it, since HTML matches `type` values ASCII case-insensitively.
+    [Fact]
+    public void Hidden_Input_Rule_Matches_Any_Case_Of_The_Type()
+    {
+        var (_, _, body) = NewDocument();
+        var input = body.OwnerDocument!.CreateElement("input");
+        input.SetAttribute("type", "hIdDeN");
+        body.AppendChild(input);
+
+        var engine = EngineWith("input[type=\"hidden\"] { display: none; } input[name=\"q\" i] { color: red; }");
+
+        Assert.Equal("none", engine.GetComputedStyle(input).GetPropertyValue("display"));
+    }
+
     // `#q\ r` is the id "q r". The rule index used to file it under the type `r`, so a <div> never
     // saw it.
     [Theory]

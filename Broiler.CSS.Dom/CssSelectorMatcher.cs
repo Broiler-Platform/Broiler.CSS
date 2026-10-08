@@ -218,6 +218,9 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
                     match.Groups["op"].Success ? match.Groups["op"].Value : null,
                     match.Groups["value"].Success
                         ? match.Groups["value"].Value.Trim().Trim('"', '\'')
+                        : null,
+                    match.Groups["flag"].Success
+                        ? char.ToLowerInvariant(match.Groups["flag"].Value[0]) == 'i'
                         : null));
                 return string.Empty;
             });
@@ -546,17 +549,44 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
             return true;
 
         var actual = attribute.Value.Value;
+        var comparison = filter.CaseInsensitive ?? HasCaseInsensitiveValue(element, filter.Name)
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
         return filter.Operator switch
         {
-            "=" => actual == filter.Value,
-            "|=" => actual == filter.Value || actual.StartsWith(filter.Value + "-", StringComparison.Ordinal),
-            "~=" => actual.Split(AsciiWhitespace, StringSplitOptions.RemoveEmptyEntries).Contains(filter.Value),
-            "^=" => actual.StartsWith(filter.Value, StringComparison.Ordinal),
-            "$=" => actual.EndsWith(filter.Value, StringComparison.Ordinal),
-            "*=" => actual.Contains(filter.Value, StringComparison.Ordinal),
+            "=" => string.Equals(actual, filter.Value, comparison),
+            "|=" => string.Equals(actual, filter.Value, comparison) || actual.StartsWith(filter.Value + "-", comparison),
+            "~=" => actual.Split(AsciiWhitespace, StringSplitOptions.RemoveEmptyEntries).Any(token => string.Equals(token, filter.Value, comparison)),
+            "^=" => actual.StartsWith(filter.Value, comparison),
+            "$=" => actual.EndsWith(filter.Value, comparison),
+            "*=" => actual.Contains(filter.Value, comparison),
             _ => false,
         };
     }
+
+    /// <summary>
+    /// HTML §4.16.2 ("Case-sensitivity of selectors"): on an HTML element, the values of these
+    /// attributes are matched ASCII case-insensitively by attribute selectors that carry no
+    /// <c>i</c> or <c>s</c> flag. So the user-agent rule <c>input[type="hidden"]</c> hides
+    /// Acid3's <c>&lt;input type=HIDDEN&gt;</c>, which was drawn as a visible field.
+    /// </summary>
+    private static readonly HashSet<string> CaseInsensitiveHtmlAttributes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "accept", "accept-charset", "align", "alink", "axis", "bgcolor", "charset", "checked",
+        "clear", "codetype", "color", "compact", "declare", "defer", "dir", "direction",
+        "disabled", "enctype", "face", "frame", "hreflang", "http-equiv", "lang", "language",
+        "link", "media", "method", "multiple", "nohref", "noresize", "noshade", "nowrap",
+        "readonly", "rel", "rev", "rules", "scope", "scrolling", "selected", "shape", "target",
+        "text", "type", "valign", "valuetype", "vlink",
+    };
+
+    /// <remarks>
+    /// The rule is for HTML elements in HTML documents. The DOM does not say which kind of document
+    /// an element is in, so an element in the HTML namespace, or in none, counts as one.
+    /// </remarks>
+    private static bool HasCaseInsensitiveValue(DomElement element, string attributeName) =>
+        element.NamespaceUri is null or "http://www.w3.org/1999/xhtml" &&
+        CaseInsensitiveHtmlAttributes.Contains(attributeName);
 
     /// <summary>
     /// <c>:dir(ltr|rtl)</c> — HTML §3.2.6.6 "the directionality of an element".
@@ -1487,9 +1517,11 @@ public sealed partial class CssSelectorMatcher(ICssSelectorStateProvider? stateP
     };
 
     private readonly record struct SelectorPart(char Combinator, string Compound);
-    private readonly record struct AttributeFilter(string Name, string? Operator, string? Value);
+    /// <param name="CaseInsensitive">The selector's <c>i</c> (true) or <c>s</c> (false) flag
+    /// (Selectors 4 §6.3), or null for the document language's default.</param>
+    private readonly record struct AttributeFilter(string Name, string? Operator, string? Value, bool? CaseInsensitive);
     private readonly record struct Pseudo(string Name, string? Argument, int Start, int Length);
 
-    [GeneratedRegex(@"\[\s*(?<name>[^\s~|^$*=\]]+)\s*(?:(?<op>[~|^$*]?=)\s*(?<value>(?:'[^']*'|""[^""]*""|[^\]\s]+)))?\s*\]", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\[\s*(?<name>[^\s~|^$*=\]]+)\s*(?:(?<op>[~|^$*]?=)\s*(?<value>(?:'[^']*'|""[^""]*""|[^\]\s]+))(?:\s+(?<flag>[iIsS]))?)?\s*\]", RegexOptions.Compiled)]
     private static partial Regex AttributeRegex();
 }
