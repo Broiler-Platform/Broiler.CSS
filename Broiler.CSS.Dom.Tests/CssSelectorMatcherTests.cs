@@ -62,6 +62,40 @@ public sealed class CssSelectorMatcherTests
         Assert.True(matcher.Matches(second, ":last-child"));
     }
 
+    // HTML §4.16.2: on an HTML element, `type` and the other listed attributes match their values
+    // ASCII case-insensitively; other attributes do not. Selectors 4's `i` and `s` flags override.
+    [Theory]
+    [InlineData("input[type=\"hidden\"]", "HIDDEN", true)]
+    [InlineData("input[type=hidden]", "hIdDeN", true)]
+    [InlineData("input[type^=\"hid\"]", "HiDden", true)]
+    [InlineData("input[type=\"hidden\" s]", "HIDDEN", false)]
+    [InlineData("input[name=\"q\"]", "Q", false)]
+    [InlineData("input[name=\"q\" i]", "Q", true)]
+    [InlineData("input[name=q I]", "Q", true)]
+    [InlineData("input[name~=\"b\" i]", "a B c", true)]
+    public void Attribute_Values_Match_Case_Insensitively_Where_Html_Says(string selector, string value, bool expected)
+    {
+        var document = new DomDocument();
+        var input = document.CreateElement("input");
+        document.AppendChild(input);
+        var attribute = selector.Contains("[type", StringComparison.Ordinal) ? "type" : "name";
+        input.SetAttribute(attribute, value);
+
+        Assert.Equal(expected, new CssSelectorMatcher().Matches(input, selector));
+    }
+
+    [Fact]
+    public void Case_Insensitive_Attribute_List_Applies_Only_To_Html_Elements()
+    {
+        var document = new DomDocument();
+        var element = document.CreateElementNS("http://www.w3.org/2000/svg", "a");
+        document.AppendChild(element);
+        element.SetAttribute("type", "HIDDEN");
+
+        Assert.False(new CssSelectorMatcher().Matches(element, "[type=\"hidden\"]"));
+        Assert.True(new CssSelectorMatcher().Matches(element, "[type=\"hidden\" i]"));
+    }
+
     [Fact]
     public void Matches_Level_Four_Functional_Pseudo_Classes()
     {
