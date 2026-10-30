@@ -135,7 +135,9 @@ public sealed class CssStyleEngineRenderModeTests
             }
         }
 
-        await Task.WhenAll(Task.Run(() => Run(print: true)), Task.Run(() => Run(print: false)));
+        await Task.WhenAll(
+            Task.Run(() => Run(print: true), TestContext.Current.CancellationToken),
+            Task.Run(() => Run(print: false), TestContext.Current.CancellationToken));
 
         Assert.Empty(mismatches);
     }
